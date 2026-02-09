@@ -20,7 +20,7 @@ OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-MODEL_ID = "tngtech/deepseek-r1t2-chimera:free"
+MODEL_ID = "deepseek/deepseek-r1-0528:free"
 PROXIES = {"http": "http://proxy.server:3128", "https": "http://proxy.server:3128"}
 
 # Verify all keys are loaded
