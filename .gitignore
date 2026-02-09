@@ -1,0 +1,37 @@
+# Environment variables (SECRETS - never commit!)
+.env
+.env.local
+.env.*.local
+
+# Database files
+*.db
+arya_memory.db
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+env/
+venv/
+.venv
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Audio files (temporary voice files)
+arya_voice.mp3
+*.wav
+
+# Node modules (for later when you add web)
+node_modules/
