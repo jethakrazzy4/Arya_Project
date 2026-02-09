@@ -21,7 +21,9 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 MODEL_ID = "deepseek/deepseek-r1-0528:free"
-PROXIES = {"http": "http://proxy.server:3128", "https": "http://proxy.server:3128"}
+
+# ❌ REMOVED: PROXIES line - Railway doesn't need proxy!
+# ✅ Railway can access external APIs directly
 
 # Verify all keys are loaded
 assert TELEGRAM_TOKEN, "ERROR: TELEGRAM_TOKEN not found"
@@ -35,20 +37,28 @@ client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================
-# 2. INTERNAL ENGINES (Voice & Eyes)
+# 2. INTERNAL ENGINES (Voice & Eyes) - FIXED
 # ==========================================
+
 def generate_voice_sync(text):
+    """Generate voice and return as BytesIO (in-memory, no disk save)"""
     try:
         clean_text = text.replace("*", "").replace('"', "")
         tts = gTTS(text=clean_text, lang='en', tld='co.uk')
-        file_path = "arya_voice.mp3"
-        tts.save(file_path)
-        return file_path
+        
+        # ✅ FIXED: Use BytesIO instead of saving to disk
+        voice_io = BytesIO()
+        tts.write_to_fp(voice_io)
+        voice_io.seek(0)
+        voice_io.name = 'arya_voice.mp3'  # Set filename for Telegram
+        
+        return voice_io
     except Exception as e:
-        print(f"Cloud Voice Error: {e}")
+        print(f"Voice Error: {e}")
         return None
 
 def generate_image_sync(prompt):
+    """Generate image using Hugging Face API"""
     MANDATORY_LOOK = "24-year-old woman, sharp chin-length dark hair bob, expressive dark eyes, natural realistic skin texture, athletic build"
     full_prompt = f"Cinematic photo of {MANDATORY_LOOK}, {prompt}, high quality, 8k, sharp focus, vibrant colors"
     negative = "sketch, black and white, drawing, cartoon, extra fingers, deformed, blurry, plastic skin"
@@ -62,19 +72,26 @@ def generate_image_sync(prompt):
     }
 
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, proxies=PROXIES, timeout=60)
+        # ✅ FIXED: Removed proxies=PROXIES parameter
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
+        
         if response.status_code == 200:
             img_data = BytesIO(response.content)
             img_data.seek(0)
             img_data.name = 'arya_capture.jpg'
+            print(f"✅ Image generated successfully")
             return img_data
+        else:
+            print(f"❌ Image API returned status {response.status_code}: {response.text}")
+            return None
     except Exception as e:
-        print(f"Image API Error: {e}")
-    return None
+        print(f"❌ Image API Error: {e}")
+        return None
 
 # ==========================================
 # 3. DATABASE & MEMORY (Supabase)
 # ==========================================
+
 def get_or_create_user(telegram_id):
     """Get existing user or create new one"""
     try:
@@ -139,9 +156,11 @@ def get_conversation_history(user_id, limit=10):
         return []
 
 # ==========================================
-# 4. HANDLERS
+# 4. HANDLERS - IMPROVED
 # ==========================================
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Main message handler"""
     user_id_telegram = update.effective_user.id
     user_text = update.message.text
     chat_id = update.effective_chat.id
@@ -166,7 +185,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Load personality
     try:
-        with open("soul.txt", "r") as f:
+        with open("soul.txt", "r", encoding="utf-8") as f:
             soul_content = f.read()
     except:
         soul_content = "You are Arya, a 24-year-old AI companion."
@@ -191,13 +210,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Save Arya's response
         save_to_memory(user_id, "arya", arya_reply)
 
-        # Send response (split into multiple messages if needed)
-        for part in arya_reply.split('\n\n')[:3]:
-            if "IMAGE_PROMPT:" in part:
-                # Handle image generation if needed
-                asyncio.create_task(send_photo_task(context, chat_id, part.split("IMAGE_PROMPT:")[1].strip()))
+        # Process response for images and voice
+        parts = arya_reply.split('\n\n')
+        
+        for part in parts[:3]:  # Max 3 message bubbles
+            if not part.strip():
                 continue
-
+                
+            # Check for image request
+            if "IMAGE_PROMPT:" in part:
+                prompt = part.split("IMAGE_PROMPT:")[1].strip()
+                asyncio.create_task(send_photo_task(context, chat_id, prompt))
+                continue
+            
+            # Check for voice request (optional - if user asks)
+            if "VOICE:" in part.lower() or "send voice" in user_text.lower():
+                asyncio.create_task(send_voice_task(context, chat_id, part))
+                continue
+            
+            # Send text message
             await update.message.reply_text(part.strip())
     
     except Exception as e:
@@ -207,17 +238,58 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_photo_task(context, chat_id, prompt):
     """Generate and send image"""
     try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
+        
+        # Generate image in thread pool (blocks)
         photo = await asyncio.to_thread(generate_image_sync, prompt)
+        
         if photo:
-            await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="for you... 😉")
+            await context.bot.send_photo(
+                chat_id=chat_id, 
+                photo=photo, 
+                caption="for you... 😉"
+            )
+            print(f"✅ Photo sent to chat {chat_id}")
+        else:
+            print(f"❌ Photo generation failed for chat {chat_id}")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Sorry, couldn't generate the image right now. Try again?"
+            )
     except Exception as e:
-        print(f"Photo error: {e}")
+        print(f"❌ Photo send error: {e}")
+
+async def send_voice_task(context, chat_id, text):
+    """Generate and send voice message"""
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="record_voice")
+        
+        # Generate voice in thread pool
+        voice = await asyncio.to_thread(generate_voice_sync, text)
+        
+        if voice:
+            await context.bot.send_voice(
+                chat_id=chat_id,
+                voice=voice
+            )
+            print(f"✅ Voice sent to chat {chat_id}")
+        else:
+            print(f"❌ Voice generation failed for chat {chat_id}")
+    except Exception as e:
+        print(f"❌ Voice send error: {e}")
 
 # ==========================================
 # 5. START
 # ==========================================
+
 if __name__ == '__main__':
-    print("Arya 2.8 Memory Monolith Waking up...")
+    print("🚀 Arya 2.9 Cloud Edition - Starting...")
+    print("✅ Proxy removed (Railway-compatible)")
+    print("✅ Voice using BytesIO (no disk writes)")
+    print("✅ Image generation fixed")
+    
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    
+    print("🤖 Bot is running. Press Ctrl+C to stop.")
     app.run_polling()
