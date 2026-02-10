@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 from datetime import datetime
 import json
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
@@ -17,7 +18,7 @@ load_dotenv()
 # ==========================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")
+#HF_TOKEN = os.getenv("HF_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 MODEL_ID = "tngtech/deepseek-r1t2-chimera:free"
@@ -28,7 +29,7 @@ MODEL_ID = "tngtech/deepseek-r1t2-chimera:free"
 # Verify all keys are loaded
 assert TELEGRAM_TOKEN, "ERROR: TELEGRAM_TOKEN not found"
 assert OPENROUTER_KEY, "ERROR: OPENROUTER_KEY not found"
-assert HF_TOKEN, "ERROR: HF_TOKEN not found"
+#assert HF_TOKEN, "ERROR: HF_TOKEN not found"
 assert SUPABASE_URL, "ERROR: SUPABASE_URL not found"
 assert SUPABASE_KEY, "ERROR: SUPABASE_KEY not found"
 
@@ -58,31 +59,30 @@ def generate_voice_sync(text):
         return None
 
 def generate_image_sync(prompt):
-    """Generate image using Hugging Face API"""
+    """Generate image using Pollinations.AI (FREE, uncensored)"""
+    import urllib.parse
+    
     MANDATORY_LOOK = "24-year-old woman, sharp chin-length dark hair bob, expressive dark eyes, natural realistic skin texture, athletic build"
     full_prompt = f"Cinematic photo of {MANDATORY_LOOK}, {prompt}, high quality, 8k, sharp focus, vibrant colors"
-    negative = "sketch, black and white, drawing, cartoon, extra fingers, deformed, blurry, plastic skin"
-
-    API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-
-    payload = {
-        "inputs": full_prompt,
-        "parameters": {"negative_prompt": negative, "guidance_scale": 9.0}
-    }
-
+    
+    # URL encode the prompt
+    encoded_prompt = urllib.parse.quote(full_prompt)
+    
+    # Pollinations.AI - FREE image generation
+    API_URL = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&model=flux&nologo=true&enhance=true"
+    
     try:
-        # ✅ FIXED: Removed proxies=PROXIES parameter
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
+        print(f"🎨 Generating image with Pollinations.AI...")
+        response = requests.get(API_URL, timeout=30)
         
         if response.status_code == 200:
             img_data = BytesIO(response.content)
             img_data.seek(0)
             img_data.name = 'arya_capture.jpg'
-            print(f"✅ Image generated successfully")
+            print(f"✅ Image generated successfully (FREE)")
             return img_data
         else:
-            print(f"❌ Image API returned status {response.status_code}: {response.text}")
+            print(f"❌ Image API returned status {response.status_code}")
             return None
     except Exception as e:
         print(f"❌ Image API Error: {e}")
