@@ -87,7 +87,7 @@ def generate_image_sync(prompt):
     API_URL = (
         f"https://gen.pollinations.ai/image/{encoded_prompt}"
         f"?key={POLLINATIONS_API_KEY}"
-        f"&model=flux"
+        f"&model=zimage"
         f"&width=1024"
         f"&height=1024"
         f"&nologo=true"
