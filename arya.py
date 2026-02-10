@@ -20,7 +20,7 @@ OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-MODEL_ID = "deepseek/deepseek-r1-0528:free"
+MODEL_ID = "qwen/qwen3-next-80b-a3b-instruct:free"
 
 # ❌ REMOVED: PROXIES line - Railway doesn't need proxy!
 # ✅ Railway can access external APIs directly
