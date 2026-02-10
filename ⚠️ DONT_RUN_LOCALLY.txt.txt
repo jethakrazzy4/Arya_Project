@@ -1,0 +1,19 @@
+⚠️ WARNING ⚠️
+   
+   DO NOT RUN arya.py ON THIS LAPTOP!
+   
+   The bot is running on Railway 24/7.
+   
+   To test the bot:
+   1. Open Telegram
+   2. Send message to Arya102
+   3. Check Railway logs: https://railway.app
+   
+   Running locally will cause "Conflict" error!
+   
+   ONLY edit code here, then:
+   git add .
+   git commit -m "update"
+   git push origin main
+   
+   Railway will auto-deploy in 30 seconds.
