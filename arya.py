@@ -22,6 +22,8 @@ OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 MODEL_ID = "tngtech/deepseek-r1t2-chimera:free"
+POLLINATIONS_API_KEY = os.getenv("POLLINATIONS_API_KEY")
+
 
 # ❌ REMOVED: PROXIES line - Railway doesn't need proxy!
 # ✅ Railway can access external APIs directly
@@ -32,6 +34,8 @@ assert OPENROUTER_KEY, "ERROR: OPENROUTER_KEY not found"
 #assert HF_TOKEN, "ERROR: HF_TOKEN not found"
 assert SUPABASE_URL, "ERROR: SUPABASE_URL not found"
 assert SUPABASE_KEY, "ERROR: SUPABASE_KEY not found"
+assert POLLINATIONS_API_KEY, "ERROR: POLLINATIONS_API_KEY not found"
+
 
 # Initialize clients
 client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_KEY)
@@ -59,34 +63,52 @@ def generate_voice_sync(text):
         return None
 
 def generate_image_sync(prompt):
-    """Generate image using Pollinations.AI (FREE, uncensored)"""
-    import urllib.parse
-    
-    MANDATORY_LOOK = "24-year-old woman, sharp chin-length dark hair bob, expressive dark eyes, natural realistic skin texture, athletic build"
-    full_prompt = f"Cinematic photo of {MANDATORY_LOOK}, {prompt}, high quality, 8k, sharp focus, vibrant colors"
-    
-    # URL encode the prompt
+    """
+    Pollinations.ai OFFICIAL API (key-based)
+    High quality, uncensored
+    ONLY image logic changed
+    """
+
+    MANDATORY_LOOK = (
+        "24-year-old woman, sharp chin-length dark hair bob, "
+        "expressive dark eyes, natural realistic skin texture, athletic build"
+    )
+
+    # Cleaner prompt = sharper images
+    full_prompt = (
+        f"RAW professional DSLR photo of {MANDATORY_LOOK}, "
+        f"{prompt}, realistic skin texture, natural lighting, "
+        f"85mm lens, shallow depth of field, ultra-detailed"
+    )
+
     encoded_prompt = urllib.parse.quote(full_prompt)
-    
-    # Pollinations.AI - FREE image generation
-    API_URL = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=flux-realism&width=1536&height=1536&model=flux&nologo=true&enhance=true"
-    
+
+    # ✅ OFFICIAL Pollinations unified API
+    API_URL = (
+        f"https://gen.pollinations.ai/image/{encoded_prompt}"
+        f"?key={POLLINATIONS_API_KEY}"
+        f"&model=flux"
+        f"&width=1024"
+        f"&height=1024"
+        f"&nologo=true"
+    )
+
     try:
-        print(f"🎨 Generating image with Pollinations.AI...")
-        response = requests.get(API_URL, timeout=30)
-        
+        response = requests.get(API_URL, timeout=45)
+
         if response.status_code == 200:
             img_data = BytesIO(response.content)
             img_data.seek(0)
-            img_data.name = 'arya_capture.jpg'
-            print(f"✅ Image generated successfully (FREE)")
+            img_data.name = "arya_capture.jpg"
             return img_data
-        else:
-            print(f"❌ Image API returned status {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"❌ Image API Error: {e}")
+
+        print("Pollinations API error:", response.status_code)
         return None
+
+    except Exception as e:
+        print("Image generation error:", e)
+        return None
+
 
 # ==========================================
 # 3. DATABASE & MEMORY (Supabase)
