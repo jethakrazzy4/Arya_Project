@@ -69,7 +69,7 @@ def generate_image_sync(prompt):
     encoded_prompt = urllib.parse.quote(full_prompt)
     
     # Pollinations.AI - FREE image generation
-    API_URL = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&model=flux&nologo=true&enhance=true"
+    API_URL = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=flux-realism&width=1536&height=1536&model=flux&nologo=true&enhance=true"
     
     try:
         print(f"🎨 Generating image with Pollinations.AI...")
