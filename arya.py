@@ -34,6 +34,10 @@ from supabase import create_client
 # Load environment variables
 load_dotenv()
 
+# UNBUFFER PYTHON OUTPUT FOR RAILWAY LOGS - Critical!
+import sys
+sys.stdout.reconfigure(line_buffering=True)
+
 # =====================================================
 # PART ONE: CENTRALIZED API CONFIGURATION
 # =====================================================
@@ -86,6 +90,49 @@ brain_client = OpenAI(base_url=BRAIN_BASE_URL, api_key=BRAIN_API_KEY)
 transcription_client = OpenAI(base_url=TRANSCRIPTION_BASE_URL, api_key=TRANSCRIPTION_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 print("[STARTUP] ✅ All clients initialized!")
+
+# =====================================================
+# PART TWO-A: RESPONSE CLEANING (Remove LLM Thinking)
+# =====================================================
+# Some models output their internal reasoning. This cleans it.
+
+THINKING_PATTERNS = [
+    "alright,", "first,", "she should", "the tone should", "this is",
+    "since", "arya needs", "arya's", "the user", "let me", "i need to",
+    "the response", "she needs", "this means", "so she", "aiming for",
+    "prompt should", "visual prompt", "arya's reply", "wrapping up"
+]
+
+def clean_lm_response(text: str) -> str:
+    """
+    Remove LLM internal thinking/reasoning from response.
+    Some models output their thought process - we only want the actual response.
+    """
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        # Skip lines that are obvious thinking/meta text
+        skip = False
+        for pattern in THINKING_PATTERNS:
+            if pattern in line.lower():
+                skip = True
+                break
+        
+        # Skip lines that are too long (usually thinking/explanations)
+        if len(line) > 200 and any(word in line.lower() for word in ["should", "needs", "arya", "first"]):
+            skip = True
+        
+        if not skip and line.strip():
+            cleaned_lines.append(line)
+    
+    result = '\n'.join(cleaned_lines).strip()
+    
+    # Fallback: if empty after cleaning, return original
+    if not result:
+        result = text.strip()
+    
+    return result
 
 # =====================================================
 # PART TWO: HUMANISTIC ERROR MESSAGES
@@ -628,11 +675,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             temperature=0.9
         )
         arya_reply = response.choices[0].message.content or "..."
-        print(f"[BRAIN] ✅ Got response: {arya_reply[:60]}...")
+        
+        # CRITICAL: Clean the response of LLM thinking text
+        print(f"[BRAIN] ✅ Raw response received, cleaning...")
+        arya_reply = clean_lm_response(arya_reply)
+        print(f"[BRAIN] ✅ Cleaned response: {arya_reply[:60]}...")
 
         save_to_memory(user_id, "arya", arya_reply)
 
-        # Process response - send text parts
+        # Track if we sent any text messages
+        sent_any_text = False
+
+        # Process response - send text parts ONLY (no voice duplicate)
         parts = arya_reply.split('\n\n')
         
         for part in parts[:3]:
@@ -644,11 +698,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 prompt = part.split("IMAGE_PROMPT:")[1].strip()
                 print(f"[MSG] Detected image request, queuing...")
                 asyncio.create_task(send_photo_task(context, chat_id, prompt))
-                continue
-
+                continue  # Don't send this part as text
+            
             # Send text message
             print(f"[MSG] Sending text message...")
             await update.message.reply_text(part.strip())
+            sent_any_text = True
 
         # Check if we should add an onboarding question to the reply
         next_question = get_next_onboarding_question(user_id)
@@ -656,12 +711,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[MSG] Adding onboarding question...")
             await update.message.reply_text(next_question)
             increment_daily_questions(user_id)
+            sent_any_text = True
 
-        # Decide if we should send voice (one per user per day)
-        # Only send if no text message was sent AND voice hasn't been sent today
-        if can_send_voice_today(user_id):
-            if random.random() < 0.3:  # 30% chance on each message
-                print(f"[MSG] Queueing voice note...")
+        # CRITICAL FIX: Only send voice on NEXT message, not same message
+        # Voice should only be sent if:
+        # 1. User sent voice (handled in handle_voice)
+        # 2. OR randomly on a message that doesn't already have text
+        # DO NOT send voice immediately after sending text
+        print(f"[MSG] Text sent: {sent_any_text}, checking voice eligibility...")
+        if not sent_any_text and can_send_voice_today(user_id):
+            # Only send voice if we didn't send any text
+            if random.random() < 0.2:  # Reduced to 20% to be less annoying
+                print(f"[MSG] Queueing voice note (no text was sent)...")
                 asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
 
     except Exception as e:
@@ -740,9 +801,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             temperature=0.9
         )
         arya_reply = response.choices[0].message.content or "..."
+        
+        # Clean response of thinking text
+        print(f"[VOICE_MSG] Cleaning response...")
+        arya_reply = clean_lm_response(arya_reply)
+        print(f"[VOICE_MSG] ✅ Got response: {arya_reply[:60]}...")
 
         save_to_memory(user_id, "arya", arya_reply)
-        print(f"[VOICE_MSG] ✅ Got response: {arya_reply[:60]}...")
 
         # Send text response
         print(f"[MSG] Sending text reply to voice...")
@@ -751,8 +816,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ALWAYS send voice back when user sends voice (feels natural)
         # This is separate from the one-per-day limit - user initiated voice gets voice reply
         if can_send_voice_today(user_id):
-            print(f"[VOICE_MSG] Sending voice reply...")
+            print(f"[VOICE_MSG] Sending voice reply (user initiated voice)...")
             asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
+        else:
+            print(f"[VOICE_MSG] ⚠️ Voice limit reached for today, only sent text")
 
     except Exception as e:
         print(f"[VOICE_MSG] ❌ Error: {str(e)}")
