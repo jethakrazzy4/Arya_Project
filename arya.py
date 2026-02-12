@@ -49,7 +49,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BRAIN_PROVIDER = "openrouter"
 BRAIN_API_KEY = os.getenv("OPENROUTER_KEY")
 BRAIN_BASE_URL = "https://openrouter.ai/api/v1"
-BRAIN_MODEL = "x-ai/grok-4.1-fast"
+BRAIN_MODEL = "deepseek/deepseek-v3.2"
 
 # -- VOICE TRANSCRIPTION --
 TRANSCRIPTION_PROVIDER = "groq"
