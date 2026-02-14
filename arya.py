@@ -1,11 +1,13 @@
 """
 =====================================================
-ARYA 5.0 - FINAL VERSION (WITH FREE MODEL TESTING)
+ARYA 5.0 - FINAL CORRECTED VERSION
 =====================================================
-All three critical issues fixed:
-✅ Issue #1: Real image generation (Free model for testing)
-✅ Issue #2: User data extraction & storage
-✅ Issue #3: Voice XOR Text (not both)
+✅ FIX #1: Images via FREE Pollinations.ai (no API key)
+✅ FIX #2: User data extraction & storage
+✅ FIX #3: Voice XOR Text (not both)
+✅ FIX #4: Explicit voice trigger when user asks
+✅ FIX #5: Explicit image trigger when user asks
+✅ FIX #6: Database schema issues fixed
 ✅ ElevenLabs for natural voice output
 ✅ Check-in every 6 hours
 =====================================================
@@ -56,34 +58,28 @@ TRANSCRIPTION_BASE_URL = "https://api.groq.com/openai/v1"
 TRANSCRIPTION_MODEL = "whisper-large-v3"
 
 # =====================================================
-# FIX #1: IMAGE GENERATION - TOGETHER.AI (FREE MODEL FOR TESTING)
+# FIX #1: IMAGE GENERATION - FREE POLLINATIONS.AI (NO KEY NEEDED)
 # =====================================================
-IMAGE_PROVIDER = "together.ai"
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
-TOGETHER_BASE_URL = "https://api.together.xyz/v1"
-
-# ⭐ FREE MODEL FOR TESTING (Stable Diffusion 2.1)
-# Change to: "black-forest-labs/FLUX.1-pro" when you want paid premium quality
-IMAGE_MODEL = "stabilityai/stable-diffusion-2.1"
-
-IMAGE_WIDTH = 768  # Reduced for free model (works better)
-IMAGE_HEIGHT = 768  # Reduced for free model (works better)
+IMAGE_PROVIDER = "pollinations"
+IMAGE_BASE_URL = "https://image.pollinations.ai/prompt"
+IMAGE_MODEL = "flux"
+IMAGE_WIDTH = 768
+IMAGE_HEIGHT = 768
 
 # =====================================================
 # FIX #2: VOICE GENERATION - ELEVENLABS (FREE TIER)
 # =====================================================
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-# Voice ID: EXAVITQu4vr4xnSDxMaL = "Bella" (natural female, works on free tier)
-ELEVENLABS_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"
+ELEVENLABS_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
 
 # -- DATABASE --
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Verify all critical keys
+# Verify critical keys
 print("\n" + "="*70)
-print("[STARTUP] ARYA 5.0 - FINAL VERSION")
+print("[STARTUP] ARYA 5.0 - FINAL CORRECTED VERSION")
 print("="*70)
 print("[STARTUP] Verifying API keys...")
 assert TELEGRAM_TOKEN, "❌ ERROR: TELEGRAM_TOKEN not found in .env"
@@ -91,7 +87,6 @@ assert BRAIN_API_KEY, "❌ ERROR: OPENROUTER_KEY not found in .env"
 assert TRANSCRIPTION_API_KEY, "❌ ERROR: GROQ_API_KEY not found in .env"
 assert SUPABASE_URL, "❌ ERROR: SUPABASE_URL not found in .env"
 assert SUPABASE_KEY, "❌ ERROR: SUPABASE_KEY not found in .env"
-assert TOGETHER_API_KEY, "❌ ERROR: TOGETHER_API_KEY not found in .env"
 assert ELEVENLABS_API_KEY, "❌ ERROR: ELEVENLABS_API_KEY not found in .env"
 print("[STARTUP] ✅ All API keys verified!")
 
@@ -101,8 +96,8 @@ brain_client = OpenAI(base_url=BRAIN_BASE_URL, api_key=BRAIN_API_KEY)
 transcription_client = OpenAI(base_url=TRANSCRIPTION_BASE_URL, api_key=TRANSCRIPTION_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 print("[STARTUP] ✅ All clients initialized!")
-print(f"[STARTUP] Image Model: {IMAGE_MODEL} (FREE MODEL - change to FLUX.1-pro for premium)")
-print(f"[STARTUP] Voice Model: ElevenLabs Bella (Free Tier)")
+print(f"[STARTUP] Image Generation: {IMAGE_PROVIDER} (FREE - no API key needed)")
+print(f"[STARTUP] Voice Generation: ElevenLabs Bella (Free Tier)")
 
 # =====================================================
 # PART TWO-A: RESPONSE CLEANING (Remove LLM Thinking)
@@ -183,12 +178,12 @@ def get_random_error_message(error_type="general"):
         return random.choice(ERROR_MESSAGES)
 
 # =====================================================
-# PART THREE: SMART USER DATA EXTRACTION (FIX #2)
+# PART THREE: SMART USER DATA EXTRACTION
 # =====================================================
 
 class UserDataExtractor:
     """
-    FIX #2: Smart extraction of user data from natural conversation
+    Smart extraction of user data from natural conversation
     """
     
     @staticmethod
@@ -242,7 +237,35 @@ class UserDataExtractor:
         return None
 
 # =====================================================
-# PART FOUR: DATABASE FUNCTIONS
+# PART FOUR: KEYWORD DETECTION (FIX #4 & #5)
+# =====================================================
+
+def should_generate_image(text: str) -> bool:
+    """
+    FIX #5: Explicitly check if user is asking for an image
+    Don't rely on LLM to decide - make it explicit in code
+    """
+    image_keywords = [
+        "photo", "picture", "image", "send me", "show me",
+        "pic", "snapshot", "portrait", "selfie", "camera",
+        "take a photo", "generate", "create", "draw"
+    ]
+    return any(keyword in text.lower() for keyword in image_keywords)
+
+def should_generate_voice(text: str) -> bool:
+    """
+    FIX #4: Explicitly check if user is asking for a voice message
+    Don't rely on LLM to decide - make it explicit in code
+    """
+    voice_keywords = [
+        "voice", "audio", "voice note", "voice message", "send voice",
+        "voice message", "record", "speak", "hear your voice",
+        "say something", "talk to me", "voice call"
+    ]
+    return any(keyword in text.lower() for keyword in voice_keywords)
+
+# =====================================================
+# PART FIVE: DATABASE FUNCTIONS
 # =====================================================
 
 def get_or_create_user(telegram_id: int) -> Optional[str]:
@@ -269,10 +292,18 @@ def get_user_profile(user_id: str) -> Optional[Dict]:
         return None
 
 def update_user_profile(user_id: str, updates: Dict) -> bool:
-    """Update user profile with extracted data"""
+    """
+    FIX #6: Update user profile - only update valid columns
+    Don't try to update columns that don't exist in schema
+    """
     try:
-        supabase.table("users").update(updates).eq("id", user_id).execute()
-        print(f"[DB] ✅ Updated user profile: {updates}")
+        # Only update columns that exist in Supabase schema
+        valid_columns = ["user_name", "user_job", "user_hobbies", "last_voice_sent", "last_checkin_sent"]
+        filtered_updates = {k: v for k, v in updates.items() if k in valid_columns}
+        
+        if filtered_updates:
+            supabase.table("users").update(filtered_updates).eq("id", user_id).execute()
+            print(f"[DB] ✅ Updated user profile: {filtered_updates}")
         return True
     except Exception as e:
         print(f"[DB] ❌ Error updating profile: {str(e)}")
@@ -337,10 +368,7 @@ def mark_checkin_sent(user_id: str) -> bool:
         return False
 
 def should_send_checkin(user_id: str) -> bool:
-    """
-    Check if we should send a check-in message
-    UPDATED: Check every 6 hours (instead of 24)
-    """
+    """Check if we should send a check-in message (every 6 hours)"""
     try:
         profile = get_user_profile(user_id)
         if not profile:
@@ -352,23 +380,21 @@ def should_send_checkin(user_id: str) -> bool:
         
         last_checkin_time = datetime.fromisoformat(last_checkin)
         time_diff = datetime.now() - last_checkin_time
-        # 6 hours = 21600 seconds (changed from 86400 for 24 hours)
-        return time_diff.total_seconds() > 21600
+        return time_diff.total_seconds() > 21600  # 6 hours
     except Exception as e:
         print(f"[DB] Error should_send_checkin: {str(e)}")
         return False
 
 # =====================================================
-# PART FIVE: FIX #1 - IMAGE GENERATION (Together.ai - FREE MODEL)
+# PART SIX: IMAGE GENERATION (FREE POLLINATIONS.AI)
 # =====================================================
 
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
     """
-    FIX #1: Generate image using Together.ai
-    Using FREE model (stabilityai/stable-diffusion-2.1) for testing
-    Change to FLUX.1-pro when you want premium quality
+    Generate image using FREE Pollinations.ai
+    No API key needed - completely free!
     """
-    print(f"[IMAGE] Starting image generation with Together.ai ({IMAGE_MODEL})...")
+    print(f"[IMAGE] Starting image generation with {IMAGE_PROVIDER}...")
     
     try:
         MANDATORY_LOOK = (
@@ -383,49 +409,25 @@ def generate_image_sync(prompt: str) -> Optional[BytesIO]:
         )
 
         print(f"[IMAGE] Full prompt: {full_prompt[:80]}...")
-        print(f"[IMAGE] Calling Together.ai API (FREE model for testing)...")
-
-        headers = {
-            "Authorization": f"Bearer {TOGETHER_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "prompt": full_prompt,
-            "model": IMAGE_MODEL,
-            "steps": 25,  # Free model needs more steps
-            "height": IMAGE_HEIGHT,
-            "width": IMAGE_WIDTH,
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "top_k": 50,
-            "repetition_penalty": 1.0,
-            "negative_prompt": "blurry, low quality, watermark"
-        }
-
-        response = requests.post(
-            f"{TOGETHER_BASE_URL}/images/generations",
-            headers=headers,
-            json=payload,
-            timeout=60
+        encoded_prompt = urllib.parse.quote(full_prompt)
+        
+        api_url = (
+            f"{IMAGE_BASE_URL}/{encoded_prompt}"
+            f"?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&model={IMAGE_MODEL}&nologo=true&enhance=true"
         )
+
+        print(f"[IMAGE] Calling {IMAGE_PROVIDER} API...")
+        response = requests.get(api_url, timeout=45)
 
         print(f"[IMAGE] Response status: {response.status_code}")
 
         if response.status_code == 200:
-            response_data = response.json()
-            if "data" in response_data and len(response_data["data"]) > 0:
-                image_url = response_data["data"][0]["url"]
-                print(f"[IMAGE] Got image URL, downloading...")
-                
-                img_response = requests.get(image_url, timeout=30)
-                if img_response.status_code == 200:
-                    img_data = BytesIO(img_response.content)
-                    img_data.seek(0)
-                    print(f"[IMAGE] ✅ Image generated successfully with {IMAGE_MODEL}!")
-                    return img_data
+            img_data = BytesIO(response.content)
+            img_data.seek(0)
+            print(f"[IMAGE] ✅ Image generated successfully!")
+            return img_data
         else:
-            print(f"[IMAGE] ❌ Error: {response.status_code} - {response.text}")
+            print(f"[IMAGE] ❌ Error: {response.status_code}")
             return None
 
     except Exception as e:
@@ -433,15 +435,14 @@ def generate_image_sync(prompt: str) -> Optional[BytesIO]:
         return None
 
 # =====================================================
-# PART SIX: FIX #2 - VOICE GENERATION (ElevenLabs - FREE TIER)
+# PART SEVEN: VOICE GENERATION (ELEVENLABS)
 # =====================================================
 
 def generate_voice_sync(text: str) -> Optional[BytesIO]:
     """
-    FIX #2: Generate voice using ElevenLabs (FREE tier)
-    Uses Bella voice (natural female voice)
+    Generate voice using ElevenLabs
     """
-    print(f"[VOICE_GEN] Generating voice with ElevenLabs (Bella - FREE tier)...")
+    print(f"[VOICE_GEN] Generating voice with ElevenLabs...")
     
     try:
         text_limited = text[:500] if len(text) > 500 else text
@@ -477,7 +478,7 @@ def generate_voice_sync(text: str) -> Optional[BytesIO]:
             print(f"[VOICE_GEN] ✅ Voice generated successfully!")
             return voice_data
         else:
-            print(f"[VOICE_GEN] ❌ Error: {response.status_code}")
+            print(f"[VOICE_GEN] ❌ Error: {response.status_code} - {response.text[:100]}")
             return None
 
     except Exception as e:
@@ -485,7 +486,7 @@ def generate_voice_sync(text: str) -> Optional[BytesIO]:
         return None
 
 # =====================================================
-# PART SEVEN: VOICE TRANSCRIPTION
+# PART EIGHT: VOICE TRANSCRIPTION
 # =====================================================
 
 def transcribe_voice_sync(voice_bytes: bytes) -> Optional[str]:
@@ -513,24 +514,6 @@ def transcribe_voice_sync(voice_bytes: bytes) -> Optional[str]:
         return None
 
 # =====================================================
-# PART EIGHT: SHOULD SEND IMAGE (Improved Logic)
-# =====================================================
-
-def should_send_image_for_response(arya_reply: str) -> bool:
-    """
-    FIX #1: Better detection of when Arya should send an image
-    """
-    image_keywords = [
-        "photo", "picture", "image", "look at me", "here's a photo",
-        "here's a picture", "selfie", "show you", "see me",
-        "camera", "pose", "outfit", "wearing", "look",
-        "taken", "shoot", "photo shoot", "photoshoot"
-    ]
-    
-    reply_lower = arya_reply.lower()
-    return any(keyword in reply_lower for keyword in image_keywords)
-
-# =====================================================
 # PART NINE: MESSAGE HANDLERS
 # =====================================================
 
@@ -550,7 +533,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_random_error_message("general"))
         return
 
-    # ===== FIX #2: SMART DATA EXTRACTION =====
+    # ===== EXTRACT USER DATA =====
     print(f"[EXTRACT] Checking for user data in message...")
     profile = get_user_profile(user_id)
     
@@ -559,24 +542,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if extracted_name:
             print(f"[EXTRACT] ✅ Found name: {extracted_name}")
             update_user_profile(user_id, {"user_name": extracted_name})
-            profile = get_user_profile(user_id)
     
     if not profile or not profile.get("user_job"):
         extracted_job = UserDataExtractor.extract_job(user_message)
         if extracted_job:
             print(f"[EXTRACT] ✅ Found job: {extracted_job}")
             update_user_profile(user_id, {"user_job": extracted_job})
-            profile = get_user_profile(user_id)
     
     if not profile or not profile.get("user_hobbies"):
         extracted_hobbies = UserDataExtractor.extract_hobbies(user_message)
         if extracted_hobbies:
             print(f"[EXTRACT] ✅ Found hobbies: {extracted_hobbies}")
             update_user_profile(user_id, {"user_hobbies": extracted_hobbies})
-            profile = get_user_profile(user_id)
 
     save_to_memory(user_id, "user", user_message)
-    update_user_profile(user_id, {"last_message_from_user": datetime.now().isoformat()})
 
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -618,19 +597,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         save_to_memory(user_id, "arya", arya_reply)
 
-        # ===== FIX #3: VOICE XOR TEXT LOGIC =====
-        should_reply_with_voice = can_send_voice_today(user_id) and random.random() < 0.2
+        # ===== FIX #4 & #5: EXPLICIT KEYWORD-BASED TRIGGERS =====
+        # Check BEFORE sending - don't rely on LLM
         
-        if should_reply_with_voice:
-            print(f"[MSG] Sending voice response (voice quota available)...")
-            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
-        else:
-            print(f"[MSG] Sending text response...")
+        # Check for voice request
+        if should_generate_voice(user_message):
+            print(f"[MSG] User explicitly asked for voice - sending VOICE ONLY...")
+            if can_send_voice_today(user_id):
+                asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
+            else:
+                print(f"[MSG] Voice quota exhausted, sending text instead...")
+                await update.message.reply_text(arya_reply)
+        # Check for image request
+        elif should_generate_image(user_message):
+            print(f"[MSG] User explicitly asked for image - sending image...")
             await update.message.reply_text(arya_reply)
-
-        if should_send_image_for_response(arya_reply):
-            print(f"[MSG] Image keywords detected, generating...")
             asyncio.create_task(send_photo_task(context, chat_id, arya_reply))
+        # Regular message - random chance of voice
+        else:
+            should_reply_with_voice = can_send_voice_today(user_id) and random.random() < 0.15
+            
+            if should_reply_with_voice:
+                print(f"[MSG] Random voice chance hit - sending voice...")
+                asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
+            else:
+                print(f"[MSG] Sending text response...")
+                await update.message.reply_text(arya_reply)
 
     except Exception as e:
         print(f"[BRAIN] ❌ Error: {str(e)}")
@@ -638,9 +630,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(error_msg)
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    FIX #3: Handle voice messages with proper voice-or-text logic
-    """
+    """Handle voice messages"""
     user_id_telegram = update.effective_user.id
     chat_id = update.effective_chat.id
 
@@ -671,7 +661,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         print(f"[VOICE_MSG] Transcribed: {transcribed_text[:50]}...")
 
-        # ===== FIX #2: EXTRACT USER DATA FROM VOICE =====
+        # Extract user data from voice
         profile = get_user_profile(user_id)
         
         if not profile or not profile.get("user_name"):
@@ -679,17 +669,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if extracted_name:
                 print(f"[EXTRACT] ✅ Found name in voice: {extracted_name}")
                 update_user_profile(user_id, {"user_name": extracted_name})
-                profile = get_user_profile(user_id)
         
         if not profile or not profile.get("user_job"):
             extracted_job = UserDataExtractor.extract_job(transcribed_text)
             if extracted_job:
                 print(f"[EXTRACT] ✅ Found job in voice: {extracted_job}")
                 update_user_profile(user_id, {"user_job": extracted_job})
-                profile = get_user_profile(user_id)
 
         save_to_memory(user_id, "user", f"[voice] {transcribed_text}")
-        update_user_profile(user_id, {"last_message_from_user": datetime.now().isoformat()})
 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
@@ -726,7 +713,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         save_to_memory(user_id, "arya", arya_reply)
 
-        # ===== FIX #3: VOICE XOR TEXT (NOT BOTH!) =====
+        # ===== VOICE XOR TEXT =====
         if can_send_voice_today(user_id):
             print(f"[VOICE_MSG] Sending voice reply only (user sent voice)...")
             asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
@@ -744,7 +731,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================================
 
 async def send_photo_task(context: CallbackContext, chat_id: int, prompt: str):
-    """Generate and send image using Together.ai"""
+    """Generate and send image"""
     print(f"[PHOTO_TASK] Starting image task...")
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
@@ -768,7 +755,7 @@ async def send_photo_task(context: CallbackContext, chat_id: int, prompt: str):
         print(f"[PHOTO_TASK] ❌ Error: {str(e)}")
 
 async def send_voice_task(context: CallbackContext, chat_id: int, text: str, user_id: str = None):
-    """Generate and send voice using ElevenLabs"""
+    """Generate and send voice"""
     print(f"[VOICE_TASK] Starting voice task...")
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="record_voice")
@@ -785,8 +772,7 @@ async def send_voice_task(context: CallbackContext, chat_id: int, text: str, use
             if user_id:
                 mark_voice_sent(user_id)
         else:
-            print(f"[VOICE_TASK] ❌ Voice generation failed, sending text instead...")
-            await context.bot.send_message(chat_id=chat_id, text=text)
+            print(f"[VOICE_TASK] ❌ Voice generation failed")
 
     except Exception as e:
         print(f"[VOICE_TASK] ❌ Error: {str(e)}")
@@ -796,10 +782,7 @@ async def send_voice_task(context: CallbackContext, chat_id: int, text: str, use
 # =====================================================
 
 async def check_for_checkins(context: CallbackContext):
-    """
-    Background job: Check for check-ins every 6 hours
-    UPDATED: Changed from 24 hours to 6 hours
-    """
+    """Background job: Check for check-ins every 6 hours"""
     print(f"\n[CHECKIN_JOB] ⏰ Running check-in job (every 6 hours)...")
     
     try:
@@ -842,30 +825,32 @@ async def check_for_checkins(context: CallbackContext):
 def main():
     """Initialize and start the bot"""
     print("\n" + "="*70)
-    print("🚀 ARYA 5.0 - FINAL VERSION (READY FOR DEPLOYMENT)")
+    print("🚀 ARYA 5.0 - FINAL CORRECTED VERSION")
     print("="*70)
     print(f"[STARTUP] Brain: {BRAIN_MODEL}")
     print(f"[STARTUP] Voice In: {TRANSCRIPTION_PROVIDER} (Groq)")
-    print(f"[STARTUP] Voice Out: ElevenLabs Bella (FREE tier)")
-    print(f"[STARTUP] Images: {IMAGE_PROVIDER} ({IMAGE_MODEL})")
+    print(f"[STARTUP] Voice Out: ElevenLabs Bella (Free Tier)")
+    print(f"[STARTUP] Images: {IMAGE_PROVIDER} (FREE - no API key needed)")
     print("="*70)
     print("[STARTUP] Features:")
     print("  ✅ Text conversations with personality")
     print("  ✅ Voice transcription (Groq Whisper)")
     print("  ✅ Voice generation (ElevenLabs - natural quality)")
-    print("  ✅ Image generation (Together.ai - free model for testing)")
-    print("  ✅ Smart user profiling (extracts name, job, hobbies naturally)")
-    print("  ✅ Check-in EVERY 6 HOURS (updated!)")
-    print("  ✅ One voice note per user per day")
+    print("  ✅ Image generation (Pollinations.ai - FREE)")
+    print("  ✅ Smart user profiling (extracts name, job, hobbies)")
+    print("  ✅ Check-in EVERY 6 HOURS")
+    print("  ✅ Explicit voice triggers (when user asks)")
+    print("  ✅ Explicit image triggers (when user asks)")
     print("  ✅ Voice XOR Text (not both)")
     print("  ✅ Humanistic error messages")
-    print("  ✅ Detailed logging for Railway")
-    print("  ✅ Response cleaning (no LLM thinking)")
     print("="*70)
-    print("\n[STARTUP] ⭐ Using FREE models for testing:")
-    print(f"[STARTUP]    Image: {IMAGE_MODEL}")
-    print(f"[STARTUP]    Voice: ElevenLabs Free Tier (10K chars/month)")
-    print("[STARTUP] Change IMAGE_MODEL to 'black-forest-labs/FLUX.1-pro' for premium quality")
+    print("\n[STARTUP] 🎯 KEY FIXES:")
+    print("[STARTUP] ✅ FIX #1: Images via FREE Pollinations.ai (no API needed)")
+    print("[STARTUP] ✅ FIX #2: User data extracted & stored")
+    print("[STARTUP] ✅ FIX #3: Voice XOR Text (not both)")
+    print("[STARTUP] ✅ FIX #4: Explicit voice trigger when user asks")
+    print("[STARTUP] ✅ FIX #5: Explicit image trigger when user asks")
+    print("[STARTUP] ✅ FIX #6: Database schema issues fixed")
     print("="*70)
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -874,7 +859,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
-    # UPDATED: Check-in every 6 hours (5400 seconds for frequent checks)
     app.job_queue.run_repeating(check_for_checkins, interval=5400, first=10)
 
     print("[STARTUP] ✅ All handlers registered!")
