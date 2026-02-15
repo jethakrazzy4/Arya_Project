@@ -859,7 +859,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
-    app.job_queue.run_repeating(check_for_checkins, interval=5400, first=10)
+    app.job_queue.run_repeating(check_for_checkins, interval=25200, first=10)
 
     print("[STARTUP] ✅ All handlers registered!")
     print("[STARTUP] ✅ Check-in job scheduled (every 6 hours)")
