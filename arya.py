@@ -49,7 +49,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BRAIN_PROVIDER = "openrouter"
 BRAIN_API_KEY = os.getenv("OPENROUTER_KEY")
 BRAIN_BASE_URL = "https://openrouter.ai/api/v1"
-BRAIN_MODEL = "deepseek/deepseek-v3.2"
+BRAIN_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free"
 
 # -- VOICE TRANSCRIPTION --
 TRANSCRIPTION_PROVIDER = "groq"
@@ -60,11 +60,12 @@ TRANSCRIPTION_MODEL = "whisper-large-v3"
 # =====================================================
 # FIX #1: IMAGE GENERATION - FREE POLLINATIONS.AI (NO KEY NEEDED)
 # =====================================================
-IMAGE_PROVIDER = "pollinations"
-IMAGE_BASE_URL = "https://image.pollinations.ai/prompt"
-IMAGE_MODEL = "flux"
-IMAGE_WIDTH = 768
-IMAGE_HEIGHT = 768
+IMAGE_PROVIDER = "openrouter"
+IMAGE_MODEL = "black-forest-labs/flux.2-klein-4b"  # Premium FLUX quality
+IMAGE_WIDTH = 1024
+IMAGE_HEIGHT = 1024
+# Alternative: use free FLUX.1 model
+# IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"  # Faster, free tier
 
 # =====================================================
 # FIX #2: VOICE GENERATION - ELEVENLABS (FREE TIER)
@@ -386,52 +387,72 @@ def should_send_checkin(user_id: str) -> bool:
         return False
 
 # =====================================================
-# PART SIX: IMAGE GENERATION (FREE POLLINATIONS.AI)
+# PART SIX: IMAGE GENERATION
 # =====================================================
 
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
     """
-    Generate image using FREE Pollinations.ai
-    No API key needed - completely free!
+    Generate image using FLUX via OpenRouter
     """
-    print(f"[IMAGE] Starting image generation with {IMAGE_PROVIDER}...")
-    
+    print(f"[IMAGE] Generating image with FLUX... Prompt: {prompt[:80]}...")
     try:
-        MANDATORY_LOOK = (
-            "24-year-old woman, sharp chin-length dark hair bob, "
-            "expressive dark eyes, natural realistic skin texture, athletic build"
-        )
-
-        full_prompt = (
-            f"RAW professional DSLR photo of {MANDATORY_LOOK}, "
-            f"{prompt}, realistic skin texture, natural lighting, "
-            f"85mm lens, shallow depth of field, ultra-detailed"
-        )
-
-        print(f"[IMAGE] Full prompt: {full_prompt[:80]}...")
-        encoded_prompt = urllib.parse.quote(full_prompt)
+        # Enhance the prompt for better results
+        enhanced_prompt = f"{prompt}, high quality, detailed, photorealistic, professional photograph"
         
-        api_url = (
-            f"{IMAGE_BASE_URL}/{encoded_prompt}"
-            f"?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&model={IMAGE_MODEL}&nologo=true&enhance=true"
+        # Call FLUX via OpenRouter
+        response = requests.post(
+            f"{BRAIN_BASE_URL}/images/generations",
+            headers={
+                "Authorization": f"Bearer {BRAIN_API_KEY}",
+                "HTTP-Referer": "https://github.com/your-username/arya-bot",
+                "X-Title": "Arya Bot"
+            },
+            json={
+                "model": IMAGE_MODEL,
+                "prompt": enhanced_prompt,
+                "width": IMAGE_WIDTH,
+                "height": IMAGE_HEIGHT,
+                "num_images": 1,
+                "quality": "hd"
+            },
+            timeout=60
         )
-
-        print(f"[IMAGE] Calling {IMAGE_PROVIDER} API...")
-        response = requests.get(api_url, timeout=45)
-
-        print(f"[IMAGE] Response status: {response.status_code}")
-
+        
+        print(f"[IMAGE] Status: {response.status_code}")
+        
         if response.status_code == 200:
-            img_data = BytesIO(response.content)
-            img_data.seek(0)
-            print(f"[IMAGE] ✅ Image generated successfully!")
-            return img_data
-        else:
-            print(f"[IMAGE] ❌ Error: {response.status_code}")
+            data = response.json()
+            
+            # Extract image URL from response
+            if "data" in data and len(data["data"]) > 0:
+                image_url = data["data"][0].get("url")
+                
+                if image_url:
+                    print(f"[IMAGE] ✅ Image generated! Downloading...")
+                    
+                    # Download the image
+                    img_response = requests.get(image_url, timeout=30)
+                    
+                    if img_response.status_code == 200:
+                        print(f"[IMAGE] ✅ Image downloaded successfully!")
+                        return BytesIO(img_response.content)
+                    else:
+                        print(f"[IMAGE] ❌ Failed to download image: {img_response.status_code}")
+                        return None
+            
+            print(f"[IMAGE] ❌ No image data in response: {data}")
             return None
-
+        
+        elif response.status_code == 402:
+            print(f"[IMAGE] ⚠️ Out of credits on OpenRouter")
+            return None
+        else:
+            error_data = response.json() if response.text else {}
+            print(f"[IMAGE] ❌ Error: {response.status_code} - {error_data}")
+            return None
+            
     except Exception as e:
-        print(f"[IMAGE] ❌ Error generating image: {str(e)}")
+        print(f"[IMAGE] ❌ Error: {str(e)}")
         return None
 
 # =====================================================
@@ -825,12 +846,12 @@ async def check_for_checkins(context: CallbackContext):
 def main():
     """Initialize and start the bot"""
     print("\n" + "="*70)
-    print("🚀 ARYA 5.0 - FINAL CORRECTED VERSION")
+    print("🚀 ARYA 6.0 - VENICE + FLUX EDITION")
     print("="*70)
-    print(f"[STARTUP] Brain: {BRAIN_MODEL}")
-    print(f"[STARTUP] Voice In: {TRANSCRIPTION_PROVIDER} (Groq)")
-    print(f"[STARTUP] Voice Out: ElevenLabs Bella (Free Tier)")
-    print(f"[STARTUP] Images: {IMAGE_PROVIDER} (FREE - no API key needed)")
+    print(f"[STARTUP] Brain: Venice (Dolphin-Mistral - Uncensored)")
+    print(f"[STARTUP] Voice In: {TRANSCRIPTION_PROVIDER} (Groq Whisper)")
+    print(f"[STARTUP] Voice Out: ElevenLabs Bella (Premium)")
+    print(f"[STARTUP] Images: FLUX via OpenRouter (Professional Quality)")
     print("="*70)
     print("[STARTUP] Features:")
     print("  ✅ Text conversations with personality")
