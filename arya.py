@@ -34,6 +34,25 @@ from supabase import create_client
 
 load_dotenv()
 
+load_dotenv()
+
+import os
+SOULS = {
+    'female': 'soul_female.txt',
+    'male': 'soul_male.txt',
+    'non-binary': 'soul_nb.txt'
+}
+
+def get_personality(gender='female'):
+    """Load the right personality file based on gender"""
+    try:
+        filename = SOULS.get(gender, 'soul_female.txt')
+        path = os.path.join(os.path.dirname(__file__), filename)
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except:
+        return "You are Arya, a 24-year-old woman."
+
 import sys
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -299,12 +318,11 @@ def get_or_create_user(telegram_id: int) -> Optional[str]:
             "telegram_id", "eq", telegram_id
         ).execute()
 
-        if response.data:
+        if response.data and len(response.data) > 0:
             user_id = response.data[0]["id"]
             print(f"[DB] ✅ User found: {user_id}")
             return user_id
 
-        # Create new user
         print(f"[DB] Creating new user...")
         new_user = supabase.table("users").insert({
             "telegram_id": telegram_id,
@@ -314,13 +332,16 @@ def get_or_create_user(telegram_id: int) -> Optional[str]:
             "updated_at": datetime.now().isoformat()
         }).execute()
 
+        if not new_user.data:
+            print(f"[DB] ❌ Failed to create user")
+            return None
+
         user_id = new_user.data[0]["id"]
         
-        # Create user profile
         print(f"[DB] Creating user profile...")
         supabase.table("user_profiles").insert({
             "user_id": user_id,
-            "last_message_from_user": datetime.now().isoformat(),
+            "personality_choice": "female",
             "created_at": datetime.now().isoformat()
         }).execute()
 
@@ -334,15 +355,23 @@ def get_or_create_user(telegram_id: int) -> Optional[str]:
 def save_to_memory(user_id: str, sender: str, text: str) -> bool:
     """Save message to conversation history"""
     try:
-        supabase.table("conversations").insert({
+        if not user_id:
+            print(f"[MEMORY] ⚠️ user_id is None!")
+            return False
+        
+        response = supabase.table("conversations").insert({
             "user_id": user_id,
             "sender": sender,
-            "message": text,
+            "message": text[:2000],
             "created_at": datetime.now().isoformat()
         }).execute()
-        
-        print(f"[MEMORY] ✅ Saved message from {sender}")
-        return True
+
+        if response.data and len(response.data) > 0:
+            print(f"[MEMORY] ✅ Message saved from {sender}")
+            return True
+        else:
+            print(f"[MEMORY] ⚠️ Insert returned no data")
+            return False
 
     except Exception as e:
         print(f"[MEMORY] ❌ Error: {str(e)}")
@@ -351,13 +380,22 @@ def save_to_memory(user_id: str, sender: str, text: str) -> bool:
 def update_user_profile(user_id: str, updates: Dict) -> bool:
     """Update user profile"""
     try:
-        print(f"[PROFILE] Updating profile: {list(updates.keys())}")
-        supabase.table("user_profiles").update(updates).filter(
+        if not user_id:
+            print(f"[PROFILE] ⚠️ user_id is None!")
+            return False
+        
+        print(f"[PROFILE] Updating: {list(updates.keys())}")
+        
+        response = supabase.table("user_profiles").update(updates).filter(
             "user_id", "eq", user_id
         ).execute()
-        
-        print(f"[PROFILE] ✅ Profile updated")
-        return True
+
+        if response.data and len(response.data) > 0:
+            print(f"[PROFILE] ✅ Updated")
+            return True
+        else:
+            print(f"[PROFILE] ⚠️ Update might have failed")
+            return False
 
     except Exception as e:
         print(f"[PROFILE] ❌ Error: {str(e)}")
@@ -366,17 +404,22 @@ def update_user_profile(user_id: str, updates: Dict) -> bool:
 def get_user_profile(user_id: str) -> Optional[Dict]:
     """Get user's profile info"""
     try:
+        if not user_id:
+            print(f"[PROFILE] ⚠️ user_id is None!")
+            return None
+
         response = supabase.table("user_profiles").select("*").filter(
             "user_id", "eq", user_id
         ).execute()
 
-        if response.data:
+        if response.data and len(response.data) > 0:
             print(f"[PROFILE] ✅ Profile loaded")
             return response.data[0]
         
-        print(f"[PROFILE] ⚠️ No profile found, creating one...")
+        print(f"[PROFILE] Creating new profile...")
         supabase.table("user_profiles").insert({
             "user_id": user_id,
+            "personality_choice": "female",
             "created_at": datetime.now().isoformat()
         }).execute()
         return None
@@ -575,19 +618,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"{'='*70}")
 
     user_id = get_or_create_user(user_id_telegram)
-    # === AUTO SAVE NAME IF USER TELLS IT ===
+    
+    # ✅ NEW: Ask for personality on first message
     profile = get_user_profile(user_id)
-
-    if profile and not profile.get("user_name"):
-        lower_text = user_text.lower()
-
-        if "my name is" in lower_text:
-            name = user_text.lower().split("my name is")[-1].strip().split(" ")[0]
-            update_user_profile(user_id, {"user_name": name.capitalize()})
-
-            if not user_id:
-                await update.message.reply_text(get_random_error_message())
+    if not profile.get("personality_choice"):
+        if not profile.get("first_message_seen"):
+            # First time - ask personality question
+            update_user_profile(user_id, {"first_message_seen": True})
+            await update.message.reply_text("hey 👀 am i your girl, guy, or something else? (just say: girl/guy/other)")
             return
+        else:
+            # They answered the question
+            text_lower = user_text.lower().strip()
+            if text_lower in ['girl', 'female', 'woman', 'f']:
+                update_user_profile(user_id, {"personality_choice": "female"})
+                await update.message.reply_text("perfect 😊")
+                return
+            elif text_lower in ['guy', 'male', 'man', 'm']:
+                update_user_profile(user_id, {"personality_choice": "male"})
+                await update.message.reply_text("nice 😎")
+                return
+            elif text_lower in ['other', 'non-binary', 'nb']:
+                update_user_profile(user_id, {"personality_choice": "non-binary"})
+                await update.message.reply_text("cool 🌈")
+                return
+            else:
+                await update.message.reply_text("hey, just say: girl/guy/other")
+                return
 
     save_to_memory(user_id, "user", user_text)
     update_user_profile(user_id, {
@@ -601,11 +658,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         past_context = f"\nRELEVANT PAST INFO: {search_old_memories(user_id, user_text[:20])}"
 
     print(f"[BRAIN] Loading personality...")
-    try:
-        with open("soul.txt", "r", encoding="utf-8") as f:
-            soul_content = f.read()
-    except:
-        soul_content = "You are Arya, a 24-year-old woman with a vivid inner life."
+    profile = get_user_profile(user_id)
+    personality = profile.get("personality_choice", "female") if profile else "female"
+    soul_content = get_personality(personality)
+    print(f"[BRAIN] Using {personality} personality")
 
     history = get_conversation_history(user_id, limit=10)
 
@@ -710,11 +766,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-        try:
-            with open("soul.txt", "r", encoding="utf-8") as f:
-                soul_content = f.read()
-        except:
-            soul_content = "You are Arya, a 24-year-old woman."
+        profile = get_user_profile(user_id)
+        personality = profile.get("personality_choice", "female") if profile else "female"
+        soul_content = get_personality(personality)
+        print(f"[VOICE_MSG] Using {personality} personality")
 
         history = get_conversation_history(user_id, limit=10)
 
