@@ -20,6 +20,7 @@ import json
 import urllib.parse
 import random
 import re
+import replicate
 from io import BytesIO
 from datetime import datetime, timedelta, date, timezone
 from typing import Optional, Dict, List
@@ -49,21 +50,13 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BRAIN_PROVIDER = "openrouter"
 BRAIN_API_KEY = os.getenv("OPENROUTER_KEY")
 BRAIN_BASE_URL = "https://openrouter.ai/api/v1"
-BRAIN_MODEL = "deepseek/deepseek-chat"  # Reliable, no rate limits
+BRAIN_MODEL = "deepseek/deepseek-v3.2"  # Reliable, no rate limits
 
 # -- VOICE TRANSCRIPTION --
 TRANSCRIPTION_PROVIDER = "groq"
 TRANSCRIPTION_API_KEY = os.getenv("GROQ_API_KEY")
 TRANSCRIPTION_BASE_URL = "https://api.groq.com/openai/v1"
 TRANSCRIPTION_MODEL = "whisper-large-v3"
-
-# =====================================================
-# FIX #1: IMAGE GENERATION - FLUX VIA OPENROUTER
-# =====================================================
-IMAGE_PROVIDER = "openrouter"
-IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"  # Fast, free tier friendly
-IMAGE_WIDTH = 1024
-IMAGE_HEIGHT = 1024
 
 # =====================================================
 # FIX #2: VOICE GENERATION - ELEVENLABS (FREE TIER)
@@ -76,6 +69,9 @@ ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# -- IMAGE GENERATION --
+REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
+
 # Verify critical keys
 print("\n" + "="*70)
 print("🚀 ARYA 7.1 - FINAL FIX (ALL ISSUES RESOLVED)")
@@ -87,6 +83,7 @@ assert TRANSCRIPTION_API_KEY, "❌ ERROR: GROQ_API_KEY not found in .env"
 assert SUPABASE_URL, "❌ ERROR: SUPABASE_URL not found in .env"
 assert SUPABASE_KEY, "❌ ERROR: SUPABASE_KEY not found in .env"
 assert ELEVENLABS_API_KEY, "❌ ERROR: ELEVENLABS_API_KEY not found in .env"
+assert REPLICATE_API_KEY, "❌ ERROR: REPLICATE_API_KEY not found in .env"
 print("[STARTUP] ✅ All API keys verified!")
 
 # Initialize clients
@@ -98,7 +95,7 @@ print("[STARTUP] ✅ All clients initialized!")
 print("[STARTUP]")
 print("[STARTUP] ⚙️  COMPONENTS:")
 print("[STARTUP]   • Brain: DeepSeek (reliable, fast)")
-print("[STARTUP]   • Images: FLUX (via OpenRouter)")
+print("[STARTUP]   • Images: FLUX (via Replicate)")
 print("[STARTUP]   • Voice In: Groq Whisper")
 print("[STARTUP]   • Voice Out: ElevenLabs Bella")
 print("[STARTUP]   • Database: Supabase PostgreSQL")
@@ -340,79 +337,59 @@ def mark_voice_sent(user_id: str):
         print(f"[DB] Error marking voice: {str(e)}")
 
 # =====================================================
-# PART FIVE: IMAGE GENERATION - FLUX FIXED
+# PART FIVE: IMAGE GENERATION - REPLICATE
 # =====================================================
 
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
-    """Generate image using FLUX via OpenRouter"""
-    print(f"[IMAGE] Generating image with FLUX... Prompt: {prompt[:80]}...")
+    """Generate image using Replicate (FLUX model)"""
+    print(f"[IMAGE] Generating image with Replicate FLUX...")
+    print(f"[IMAGE] Prompt: {prompt[:80]}...")
     try:
-        # Clean the prompt (remove brackets and extra formatting)
+        # Clean the prompt
         clean_prompt = prompt.strip('[]').replace('[', '').replace(']', '')
         
-        # Enhance the prompt for FLUX
-        enhanced_prompt = f"{clean_prompt}, professional photograph, high quality, detailed, photorealistic"
+        # Create enhanced prompt for better results
+        enhanced_prompt = f"{clean_prompt}, professional photograph, high quality, detailed, photorealistic, 8k"
         
-        print(f"[IMAGE] Calling FLUX API via OpenRouter...")
+        print(f"[IMAGE] Calling Replicate API with FLUX model...")
         
-        # ✅ FIXED: Correct endpoint for OpenRouter images
-        response = requests.post(
-            "https://openrouter.ai/api/v1/images/generations",  # ✅ FIXED: Correct URL
-            headers={
-                "Authorization": f"Bearer {BRAIN_API_KEY}",
-                "HTTP-Referer": "https://github.com/your-username/arya-bot",
-                "X-Title": "Arya Bot"
-            },
-            json={
-                "model": IMAGE_MODEL,
+        # Call Replicate API using FLUX model
+        output = replicate.run(
+            "black-forest-labs/flux-schnell",
+            input={
                 "prompt": enhanced_prompt,
-                "width": IMAGE_WIDTH,
-                "height": IMAGE_HEIGHT,
-                "num_images": 1,
+                "num_outputs": 1,
+                "height": 1024,
+                "width": 1024,
             },
-            timeout=60
+            api_token=REPLICATE_API_KEY
         )
         
-        print(f"[IMAGE] Response status: {response.status_code}")
+        print(f"[IMAGE] ✅ Image generated! Output: {output}")
         
-        if response.status_code == 200:
-            data = response.json()
+        # output is a list of image URLs
+        if output and len(output) > 0:
+            image_url = output[0]
+            print(f"[IMAGE] Image URL: {image_url}")
             
-            # Extract image URL from response
-            if "data" in data and len(data["data"]) > 0:
-                image_url = data["data"][0].get("url")
-                
-                if image_url:
-                    print(f"[IMAGE] ✅ Image generated!")
-                    
-                    # Download the image
-                    img_response = requests.get(image_url, timeout=30)
-                    
-                    if img_response.status_code == 200:
-                        print(f"[IMAGE] ✅ Image downloaded successfully!")
-                        return BytesIO(img_response.content)
+            # Download the image
+            print(f"[IMAGE] Downloading image...")
+            img_response = requests.get(image_url, timeout=30)
             
-            print(f"[IMAGE] ❌ No image data in response")
-            return None
-        
-        elif response.status_code == 402:
-            print(f"[IMAGE] ⚠️ Out of credits on OpenRouter (402)")
-            return None
-        
-        elif response.status_code == 429:
-            print(f"[IMAGE] ⚠️ Rate limited (429)")
-            return None
-        
+            if img_response.status_code == 200:
+                print(f"[IMAGE] ✅ Image downloaded successfully!")
+                return BytesIO(img_response.content)
+            else:
+                print(f"[IMAGE] ❌ Failed to download image: {img_response.status_code}")
+                return None
         else:
-            try:
-                error_data = response.json() if response.text else {}
-                print(f"[IMAGE] ❌ Error {response.status_code}: {error_data}")
-            except:
-                print(f"[IMAGE] ❌ Error {response.status_code}: {response.text[:200]}")
+            print(f"[IMAGE] ❌ No image in output")
             return None
             
     except Exception as e:
         print(f"[IMAGE] ❌ Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # =====================================================

@@ -4,3 +4,4 @@ requests
 gtts
 python-dotenv
 supabase
+replicate
