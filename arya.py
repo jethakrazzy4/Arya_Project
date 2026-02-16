@@ -1,14 +1,14 @@
 """
 =====================================================
-ARYA 7.1 - FINAL FIX (ALL ISSUES RESOLVED)
+ARYA 8.0 - FINAL VERSION (ALL FIXES COMPLETE)
 =====================================================
-✅ FIX #1: Column name 'timestamp' → 'created_at'
-✅ FIX #2: FLUX image generation 404 fixed
-✅ FIX #3: Soul.txt content filtering improved
-✅ FIX #4: Remove deprecated datetime.utcnow()
-✅ FIX #5: Better error handling
-✅ DeepSeek brain (no rate limits)
-✅ FLUX image generation
+✅ FIX #1: Replicate image generation working
+✅ FIX #2: MESSAGE SPLITTING (natural bubbles)
+✅ FIX #3: IMAGE_PROMPT detection in responses
+✅ FIX #4: Onboarding questions restored
+✅ FIX #5: Girlfriend personality restored
+✅ DeepSeek brain (reliable, fast)
+✅ FLUX image generation (via Replicate)
 ✅ Production ready
 =====================================================
 """
@@ -58,9 +58,7 @@ TRANSCRIPTION_API_KEY = os.getenv("GROQ_API_KEY")
 TRANSCRIPTION_BASE_URL = "https://api.groq.com/openai/v1"
 TRANSCRIPTION_MODEL = "whisper-large-v3"
 
-# =====================================================
-# FIX #2: VOICE GENERATION - ELEVENLABS (FREE TIER)
-# =====================================================
+# -- VOICE GENERATION - ELEVENLABS --
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"  # Bella voice
 ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
@@ -69,12 +67,12 @@ ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# -- IMAGE GENERATION --
+# -- IMAGE GENERATION - REPLICATE --
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
 
 # Verify critical keys
 print("\n" + "="*70)
-print("🚀 ARYA 7.1 - FINAL FIX (ALL ISSUES RESOLVED)")
+print("🚀 ARYA 8.0 - FINAL VERSION (ALL FIXES COMPLETE)")
 print("="*70)
 print("[STARTUP] Verifying API keys...")
 assert TELEGRAM_TOKEN, "❌ ERROR: TELEGRAM_TOKEN not found in .env"
@@ -199,7 +197,32 @@ def get_random_error_message(error_type="general"):
         return random.choice(ERROR_MESSAGES)
 
 # =====================================================
-# PART THREE: SMART USER DATA EXTRACTION
+# PART THREE: ONBOARDING QUESTIONS
+# =====================================================
+
+ONBOARDING_QUESTIONS = [
+    {
+        "id": 1,
+        "question": "what's your name btw? i don't think i asked 😅",
+        "field": "user_name",
+        "day": 1
+    },
+    {
+        "id": 2,
+        "question": "so what do you do for work? or are you studying?",
+        "field": "user_job",
+        "day": 2
+    },
+    {
+        "id": 3,
+        "question": "what kinds of things do you like to do? hobbies and stuff?",
+        "field": "user_hobbies",
+        "day": 3
+    },
+]
+
+# =====================================================
+# PART THREE.1: SMART USER DATA EXTRACTION
 # =====================================================
 
 class UserDataExtractor:
@@ -238,7 +261,7 @@ class UserDataExtractor:
         return None
 
 # =====================================================
-# PART FOUR: DATABASE OPERATIONS (FIXED SCHEMA)
+# PART FOUR: DATABASE OPERATIONS
 # =====================================================
 
 def get_user_id(telegram_id: int) -> str:
@@ -264,20 +287,20 @@ def get_user_id(telegram_id: int) -> str:
     return str(telegram_id)
 
 def save_to_memory(user_id: str, sender: str, message: str):
-    """Save message to conversation history - USE created_at NOT timestamp"""
+    """Save message to conversation history"""
     try:
         memory = {
             "user_id": user_id,
             "sender": sender,
             "message": message,
-            "created_at": datetime.now(timezone.utc).isoformat()  # ✅ FIXED: created_at not timestamp
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
         supabase.table("conversations").insert(memory).execute()
     except Exception as e:
         print(f"[DB] Error saving to memory: {str(e)}")
 
-def get_conversation_history(user_id: str, limit: int = 15) -> List[Dict]:
-    """Retrieve conversation history for context - USE created_at NOT timestamp"""
+def get_conversation_history(user_id: str, limit: int = 10) -> List[Dict]:
+    """Retrieve conversation history for context"""
     try:
         response = supabase.table("conversations").select("*").eq("user_id", user_id).order("created_at", desc=False).limit(limit).execute()
         return response.data or []
@@ -295,11 +318,13 @@ def get_user_profile(user_id: str) -> Optional[Dict]:
         return None
 
 def update_user_profile(user_id: str, updates: Dict):
-    """Update user profile - ONLY update columns that exist"""
+    """Update user profile"""
     try:
         # Only update safe columns that we know exist
         safe_updates = {}
-        for key in ["user_name", "user_job", "user_hobbies"]:
+        for key in ["user_name", "user_job", "user_hobbies", "last_message_from_user", 
+                    "last_voice_at", "last_checkin_sent", "last_question_date", "questions_asked_today",
+                    "onboarding_complete", "updated_at"]:
             if key in updates:
                 safe_updates[key] = updates[key]
         
@@ -336,6 +361,102 @@ def mark_voice_sent(user_id: str):
     except Exception as e:
         print(f"[DB] Error marking voice: {str(e)}")
 
+def should_send_checkin(user_id: str) -> bool:
+    """Check if should send 24-hour check-in"""
+    try:
+        profile = get_user_profile(user_id)
+        if not profile:
+            return False
+
+        last_msg = profile.get("last_message_from_user")
+        if not last_msg:
+            return False
+
+        last_msg_time = datetime.fromisoformat(last_msg)
+        now = datetime.now(timezone.utc)
+
+        if (now - last_msg_time).total_seconds() < 86400:
+            print(f"[CHECKIN] ⚠️ User messaged recently")
+            return False
+
+        last_checkin = profile.get("last_checkin_sent")
+        if last_checkin:
+            checkin_date = datetime.fromisoformat(last_checkin).date()
+            if checkin_date == date.today():
+                print(f"[CHECKIN] ⚠️ Check-in already sent today")
+                return False
+
+        print(f"[CHECKIN] ✅ Should send check-in!")
+        return True
+
+    except Exception as e:
+        print(f"[CHECKIN] ❌ Error: {str(e)}")
+        return False
+
+def mark_checkin_sent(user_id: str) -> bool:
+    """Mark check-in sent"""
+    try:
+        print(f"[CHECKIN] Marking check-in sent for user {user_id}")
+        update_user_profile(user_id, {
+            "last_checkin_sent": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        })
+        return True
+    except Exception as e:
+        print(f"[CHECKIN] ❌ Error: {str(e)}")
+        return False
+
+def get_next_onboarding_question(user_id: str) -> Optional[str]:
+    """Get next onboarding question"""
+    try:
+        profile = get_user_profile(user_id)
+        if not profile:
+            return None
+
+        last_q_date = profile.get("last_question_date")
+        if last_q_date:
+            last_q_date = datetime.fromisoformat(last_q_date).date() if isinstance(last_q_date, str) else last_q_date
+            if last_q_date < date.today():
+                print(f"[ONBOARD] Resetting daily question counter")
+                update_user_profile(user_id, {"questions_asked_today": 0})
+                profile["questions_asked_today"] = 0
+
+        if profile.get("questions_asked_today", 0) >= 3:
+            print(f"[ONBOARD] ⚠️ Hit daily question limit")
+            return None
+
+        for q in ONBOARDING_QUESTIONS:
+            field = q["field"]
+            if not profile.get(field):
+                print(f"[ONBOARD] Next question: {field}")
+                return q["question"]
+
+        print(f"[ONBOARD] ✅ Onboarding complete!")
+        update_user_profile(user_id, {"onboarding_complete": True})
+        return None
+
+    except Exception as e:
+        print(f"[ONBOARD] ❌ Error: {str(e)}")
+        return None
+
+def increment_daily_questions(user_id: str) -> bool:
+    """Increment daily question counter"""
+    try:
+        profile = get_user_profile(user_id)
+        if not profile:
+            return False
+
+        new_count = profile.get("questions_asked_today", 0) + 1
+        update_user_profile(user_id, {
+            "questions_asked_today": new_count,
+            "last_question_date": date.today().isoformat()
+        })
+        return True
+
+    except Exception as e:
+        print(f"[ONBOARD] ❌ Error: {str(e)}")
+        return False
+
 # =====================================================
 # PART FIVE: IMAGE GENERATION - REPLICATE
 # =====================================================
@@ -348,10 +469,24 @@ def generate_image_sync(prompt: str) -> Optional[BytesIO]:
         # Clean the prompt
         clean_prompt = prompt.strip('[]').replace('[', '').replace(']', '')
         
-        # Create enhanced prompt for better results
-        enhanced_prompt = f"{clean_prompt}, professional photograph, high quality, detailed, photorealistic, 8k"
+        # Add Arya's look description for consistency
+        MANDATORY_LOOK = (
+            "24-year-old woman, sharp chin-length dark hair bob, "
+            "expressive dark eyes, natural realistic skin texture, athletic build"
+        )
         
+        # Create enhanced prompt with Arya's appearance
+        enhanced_prompt = (
+            f"RAW professional DSLR photo of {MANDATORY_LOOK}, "
+            f"{clean_prompt}, realistic skin texture, natural lighting, "
+            f"85mm lens, shallow depth of field, ultra-detailed"
+        )
+        
+        print(f"[IMAGE] Enhanced prompt: {enhanced_prompt[:100]}...")
         print(f"[IMAGE] Calling Replicate API with FLUX model...")
+        
+        # Set API token as environment variable for replicate
+        os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_KEY
         
         # Call Replicate API using FLUX model
         output = replicate.run(
@@ -361,8 +496,7 @@ def generate_image_sync(prompt: str) -> Optional[BytesIO]:
                 "num_outputs": 1,
                 "height": 1024,
                 "width": 1024,
-            },
-            api_token=REPLICATE_API_KEY
+            }
         )
         
         print(f"[IMAGE] ✅ Image generated! Output: {output}")
@@ -378,7 +512,10 @@ def generate_image_sync(prompt: str) -> Optional[BytesIO]:
             
             if img_response.status_code == 200:
                 print(f"[IMAGE] ✅ Image downloaded successfully!")
-                return BytesIO(img_response.content)
+                img_data = BytesIO(img_response.content)
+                img_data.seek(0)
+                img_data.name = "arya_capture.jpg"
+                return img_data
             else:
                 print(f"[IMAGE] ❌ Failed to download image: {img_response.status_code}")
                 return None
@@ -454,7 +591,8 @@ def is_asking_for_image(text: str) -> bool:
         "picture", "photo", "send a photo", "send pic",
         "how do you look", "what do you look like", "show yourself",
         "take a picture", "send image", "make an image",
-        "draw", "create an image", "i want to see you"
+        "draw", "create an image", "i want to see you",
+        "image", "pic", "photo of you"
     ]
     
     text_lower = text.lower()
@@ -502,53 +640,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_user_profile(user_id, {"user_job": extracted_job})
     
     save_to_memory(user_id, "user", user_text)
-    
-    # ===== CHECK IF ASKING FOR IMAGE =====
-    if is_asking_for_image(user_text):
-        print(f"[MSG] User asking for image!")
-        await context.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
-        
-        # Get image prompt from brain
-        try:
-            with open("soul.txt", "r", encoding="utf-8") as f:
-                soul_content = f.read()
-        except:
-            soul_content = "You are Arya, a 24-year-old woman."
-        
-        history = get_conversation_history(user_id, limit=8)
-        profile = get_user_profile(user_id)
-        
-        user_context = ""
-        if profile and profile.get("user_name"):
-            user_context += f"\nUSER'S NAME: {profile['user_name']}"
-        
-        system_message = soul_content + user_context + "\n\nUser is asking for an image. Respond with ONLY a 1-sentence visual description of what image to generate. Just the description, nothing else."
-        
-        messages = [{"role": "system", "content": system_message}]
-        for record in history[-5:]:
-            role = "user" if record["sender"] == "user" else "assistant"
-            messages.append({"role": role, "content": record["message"]})
-        messages.append({"role": "user", "content": user_text})
-        
-        try:
-            print(f"[MSG] Getting image prompt from DeepSeek...")
-            response = brain_client.chat.completions.create(
-                model=BRAIN_MODEL,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=50  # Keep it short
-            )
-            image_prompt = response.choices[0].message.content or "a beautiful woman, professional portrait"
-            image_prompt = image_prompt.strip()
-            print(f"[MSG] Image prompt: {image_prompt}")
-        except Exception as e:
-            print(f"[MSG] Error getting prompt: {str(e)}")
-            image_prompt = "a beautiful woman, professional portrait, natural lighting"
-        
-        # Generate the image
-        asyncio.create_task(send_photo_task(context, chat_id, image_prompt))
-        
-        return
+    update_user_profile(user_id, {
+        "last_message_from_user": datetime.now(timezone.utc).isoformat()
+    })
     
     # ===== NORMAL CHAT RESPONSE =====
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -593,13 +687,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     save_to_memory(user_id, "arya", arya_reply)
     
-    # ===== VOICE XOR TEXT =====
-    if is_asking_for_voice(user_text) and can_send_voice_today(user_id):
-        print(f"[MSG] Sending voice reply (user asked for voice)...")
-        asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
-    else:
-        print(f"[MSG] Sending text reply...")
-        await update.message.reply_text(arya_reply)
+    # ===== SPLIT MESSAGE INTO NATURAL BUBBLES =====
+    sent_any_text = False
+    parts = arya_reply.split('\n\n')  # Split by double newline
+    
+    print(f"[MSG] Response has {len(parts)} parts")
+    
+    for part in parts[:3]:  # Max 3 message bubbles
+        if not part.strip():
+            continue
+
+        # Check if this part is an image prompt
+        if "IMAGE_PROMPT:" in part:
+            # Extract the prompt
+            prompt = part.split("IMAGE_PROMPT:")[1].strip()
+            print(f"[MSG] Detected image request in response: {prompt[:50]}...")
+            asyncio.create_task(send_photo_task(context, chat_id, prompt))
+            continue
+        
+        # Send text part as separate message bubble
+        print(f"[MSG] Sending text message...")
+        await update.message.reply_text(part.strip())
+        sent_any_text = True
+
+    # ===== ADD ONBOARDING QUESTION IF APPROPRIATE =====
+    next_question = get_next_onboarding_question(user_id)
+    if next_question:
+        print(f"[MSG] Adding onboarding question...")
+        await update.message.reply_text(next_question)
+        increment_daily_questions(user_id)
+        sent_any_text = True
+
+    # ===== SEND VOICE REPLY (20% chance if no text sent) =====
+    print(f"[MSG] Text sent: {sent_any_text}, checking voice eligibility...")
+    if not sent_any_text and can_send_voice_today(user_id):
+        if random.random() < 0.2:  # 20% chance
+            print(f"[MSG] Queueing voice note (random)...")
+            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming voice messages"""
@@ -644,6 +768,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update_user_profile(user_id, {"user_job": extracted_job})
 
         save_to_memory(user_id, "user", f"[voice] {transcribed_text}")
+        update_user_profile(user_id, {
+            "last_message_from_user": datetime.now(timezone.utc).isoformat()
+        })
 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
@@ -666,7 +793,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = record["message"].replace("[voice] ", "")
             messages.append({"role": role, "content": msg})
 
-        print(f"[VOICE_MSG] Getting response from DeepSeek...")
+        print(f"[VOICE_MSG] Getting response...")
         response = brain_client.chat.completions.create(
             model=BRAIN_MODEL,
             messages=messages,
@@ -680,13 +807,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         save_to_memory(user_id, "arya", arya_reply)
 
-        # ===== VOICE XOR TEXT =====
+        print(f"[MSG] Sending text reply to voice...")
+        await update.message.reply_text(arya_reply)
+
         if can_send_voice_today(user_id):
-            print(f"[VOICE_MSG] Sending voice reply only (user sent voice)...")
+            print(f"[VOICE_MSG] Sending voice reply (user initiated voice)...")
             asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
         else:
-            print(f"[VOICE_MSG] Voice limit reached, sending text instead...")
-            await update.message.reply_text(arya_reply)
+            print(f"[VOICE_MSG] ⚠️ Voice limit reached for today, only sent text")
 
     except Exception as e:
         print(f"[VOICE_MSG] ❌ Error: {str(e)}")
@@ -755,9 +883,10 @@ def main():
     print("[STARTUP]   ✅ Text conversations (DeepSeek)")
     print("[STARTUP]   ✅ Voice transcription (Groq Whisper)")
     print("[STARTUP]   ✅ Voice generation (ElevenLabs Bella)")
-    print("[STARTUP]   ✅ Image generation (FLUX)")
+    print("[STARTUP]   ✅ Image generation (FLUX via Replicate)")
     print("[STARTUP]   ✅ Smart user profiling")
     print("[STARTUP]   ✅ Conversation memory")
+    print("[STARTUP]   ✅ Onboarding questions")
     print("[STARTUP]   ✅ Multi-user support")
     print("[STARTUP]   ✅ Humanistic error messages")
     print("[STARTUP] ")
