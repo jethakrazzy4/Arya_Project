@@ -575,9 +575,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"{'='*70}")
 
     user_id = get_or_create_user(user_id_telegram)
-    if not user_id:
-        await update.message.reply_text(get_random_error_message())
-        return
+    # === AUTO SAVE NAME IF USER TELLS IT ===
+    profile = get_user_profile(user_id)
+
+    if profile and not profile.get("user_name"):
+        lower_text = user_text.lower()
+
+        if "my name is" in lower_text:
+            name = user_text.lower().split("my name is")[-1].strip().split(" ")[0]
+            update_user_profile(user_id, {"user_name": name.capitalize()})
+
+            if not user_id:
+                await update.message.reply_text(get_random_error_message())
+            return
 
     save_to_memory(user_id, "user", user_text)
     update_user_profile(user_id, {
