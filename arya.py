@@ -464,8 +464,13 @@ def can_send_voice_today(user_id: str) -> bool:
             return True
 
         if profile.get("voice_sent_today") and profile.get("last_voice_sent_at"):
-            sent_date = datetime.fromisoformat(profile["last_voice_sent_at"]).date()
-            if sent_date == date.today():
+            try:
+                sent_datetime = datetime.fromisoformat(profile["last_voice_sent_at"])
+                sent_date = sent_datetime.date()
+            except:
+                sent_date = None
+            
+            if sent_date and sent_date == date.today():
                 print(f"[VOICE_LIMIT] ⚠️ Voice already sent today for user {user_id}")
                 return False
 
@@ -502,7 +507,7 @@ def should_send_checkin(user_id: str) -> bool:
             return False
 
         last_msg_time = datetime.fromisoformat(last_msg)
-        now = datetime.now()
+        now = datetime.now(datetime.timezone.utc)
 
         if (now - last_msg_time).total_seconds() < 86400:
             print(f"[CHECKIN] ⚠️ User messaged recently")
@@ -548,11 +553,17 @@ def get_next_onboarding_question(user_id: str) -> Optional[str]:
 
         last_q_date = profile.get("last_question_date")
         if last_q_date:
-            last_q_date = datetime.fromisoformat(last_q_date).date() if isinstance(last_q_date, str) else last_q_date
-            if last_q_date < date.today():
-                print(f"[ONBOARD] Resetting daily question counter")
-                update_user_profile(user_id, {"questions_asked_today": 0})
-                profile["questions_asked_today"] = 0
+            try:
+                if isinstance(last_q_date, str):
+                    last_q_date = datetime.fromisoformat(last_q_date).date()
+                
+                if last_q_date < date.today():
+                    print(f"[ONBOARD] Resetting daily question counter")
+                    update_user_profile(user_id, {"questions_asked_today": 0})
+                    profile["questions_asked_today"] = 0
+            except Exception as date_err:
+                print(f"[ONBOARD] ⚠️ Date parsing error: {date_err}")
+                pass
 
         if profile.get("questions_asked_today", 0) >= 3:
             print(f"[ONBOARD] ⚠️ Hit daily question limit")
