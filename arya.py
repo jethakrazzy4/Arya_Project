@@ -1,6 +1,6 @@
 """
 =====================================================
-ARYA 4.0 - FINAL COMPLETE VERSION (REPLICATE IMAGE)
+ARYA 4.0 - FINAL COMPLETE VERSION
 =====================================================
 All fixes included:
 ✅ Unbuffered output for Railway logs
@@ -9,8 +9,9 @@ All fixes included:
 ✅ Daily check-ins
 ✅ Onboarding questions
 ✅ Humanistic errors
-✅ Replicate FLUX image generation
-✅ Name saving fixed
+✅ Personality system (M/F/NB)
+✅ Auto-save user name
+✅ Production-ready
 =====================================================
 """
 
@@ -20,7 +21,6 @@ import requests
 import json
 import urllib.parse
 import random
-import replicate
 from io import BytesIO
 from datetime import datetime, timedelta, date
 from typing import Optional, Dict, List
@@ -33,12 +33,17 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from supabase import create_client
 
+# Load environment variables
 load_dotenv()
 
+# CRITICAL: Unbuffer Python output for Railway logs
 import sys
 sys.stdout.reconfigure(line_buffering=True)
 
-import os
+# =====================================================
+# PERSONALITY SYSTEM - NEW
+# =====================================================
+
 SOULS = {
     'female': 'soul_female.txt',
     'male': 'soul_male.txt',
@@ -59,39 +64,51 @@ def get_personality(gender='female'):
 # PART ONE: CENTRALIZED API CONFIGURATION
 # =====================================================
 
+# -- TELEGRAM --
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
+# -- BRAIN (LLM) --
 BRAIN_PROVIDER = "openrouter"
 BRAIN_API_KEY = os.getenv("OPENROUTER_KEY")
 BRAIN_BASE_URL = "https://openrouter.ai/api/v1"
 BRAIN_MODEL = "deepseek/deepseek-v3.2"
 
+# -- VOICE TRANSCRIPTION --
 TRANSCRIPTION_PROVIDER = "groq"
 TRANSCRIPTION_API_KEY = os.getenv("GROQ_API_KEY")
 TRANSCRIPTION_BASE_URL = "https://api.groq.com/openai/v1"
 TRANSCRIPTION_MODEL = "whisper-large-v3"
 
+# -- VOICE GENERATION (TTS) --
 TTS_PROVIDER = "gtts"
 
-# 🔥 IMAGE NOW USES REPLICATE
-IMAGE_PROVIDER = "replicate"
-REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
+# -- IMAGE GENERATION --
+IMAGE_PROVIDER = "pollinations"
+IMAGE_API_KEY = os.getenv("POLLINATIONS_API_KEY")
+IMAGE_BASE_URL = "https://image.pollinations.ai/prompt"
+IMAGE_MODEL = "flux"
+IMAGE_WIDTH = 1024
+IMAGE_HEIGHT = 1024
 
+# -- DATABASE --
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# Verify all critical keys
 print("\n" + "="*70)
-print("[STARTUP] ARYA 4.0 - REPLICATE IMAGE VERSION")
+print("[STARTUP] ARYA 4.0 - FINAL VERSION")
 print("="*70)
 print("[STARTUP] Verifying API keys...")
-assert TELEGRAM_TOKEN
-assert BRAIN_API_KEY
-assert TRANSCRIPTION_API_KEY
-assert SUPABASE_URL
-assert SUPABASE_KEY
-assert REPLICATE_API_KEY
+assert TELEGRAM_TOKEN, "❌ ERROR: TELEGRAM_TOKEN not found in .env"
+assert BRAIN_API_KEY, "❌ ERROR: OPENROUTER_KEY not found in .env"
+assert TRANSCRIPTION_API_KEY, "❌ ERROR: GROQ_API_KEY not found in .env"
+assert SUPABASE_URL, "❌ ERROR: SUPABASE_URL not found in .env"
+assert SUPABASE_KEY, "❌ ERROR: SUPABASE_KEY not found in .env"
+assert IMAGE_API_KEY, "❌ ERROR: POLLINATIONS_API_KEY not found in .env"
 print("[STARTUP] ✅ All API keys verified!")
 
+# Initialize clients
+print("[STARTUP] Initializing API clients...")
 brain_client = OpenAI(base_url=BRAIN_BASE_URL, api_key=BRAIN_API_KEY)
 transcription_client = OpenAI(base_url=TRANSCRIPTION_BASE_URL, api_key=TRANSCRIPTION_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -201,51 +218,44 @@ ONBOARDING_QUESTIONS = [
 ]
 
 # =====================================================
-# IMAGE GENERATION (REPLICATE FLUX)
+# PART FOUR: IMAGE GENERATION ENGINE
 # =====================================================
 
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
-    print(f"[IMAGE] Starting Replicate generation...")
-
+    """Generate image using configured provider"""
+    print(f"[IMAGE] Starting image generation...")
+    
     try:
-        clean_prompt = prompt.strip('[]').replace('[', '').replace(']', '')
-
         MANDATORY_LOOK = (
             "24-year-old woman, sharp chin-length dark hair bob, "
             "expressive dark eyes, natural realistic skin texture, athletic build"
         )
 
-        enhanced_prompt = (
+        full_prompt = (
             f"RAW professional DSLR photo of {MANDATORY_LOOK}, "
-            f"{clean_prompt}, realistic skin texture, natural lighting, "
+            f"{prompt}, realistic skin texture, natural lighting, "
             f"85mm lens, shallow depth of field, ultra-detailed"
         )
 
-        os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_KEY
+        encoded_prompt = urllib.parse.quote(full_prompt)
 
-        output = replicate.run(
-            "black-forest-labs/flux-schnell",
-            input={
-                "prompt": enhanced_prompt,
-                "num_outputs": 1,
-                "height": 1024,
-                "width": 1024,
-            }
+        api_url = (
+            f"{IMAGE_BASE_URL}/{encoded_prompt}"
+            f"?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&model={IMAGE_MODEL}&nologo=true&enhance=true"
         )
 
-        if output and len(output) > 0:
-            image_url = output[0]
-            img_response = requests.get(image_url, timeout=45)
+        print(f"[IMAGE] Calling {IMAGE_PROVIDER} API...")
+        response = requests.get(api_url, timeout=45)
 
-            if img_response.status_code == 200:
-                img_data = BytesIO(img_response.content)
-                img_data.seek(0)
-                img_data.name = "arya_capture.jpg"
-                print("[IMAGE] ✅ Image generated!")
-                return img_data
-
-        print("[IMAGE] ❌ No image returned")
-        return None
+        if response.status_code == 200:
+            img_data = BytesIO(response.content)
+            img_data.seek(0)
+            img_data.name = "arya_capture.jpg"
+            print(f"[IMAGE] ✅ Image generated successfully!")
+            return img_data
+        else:
+            print(f"[IMAGE] ❌ API error: HTTP {response.status_code}")
+            return None
 
     except Exception as e:
         print(f"[IMAGE] ❌ Error: {str(e)}")
@@ -338,6 +348,7 @@ def get_or_create_user(telegram_id: int) -> Optional[str]:
         print(f"[DB] Creating user profile...")
         supabase.table("user_profiles").insert({
             "user_id": user_id,
+            "personality_choice": "female",
             "last_message_from_user": datetime.now().isoformat(),
             "created_at": datetime.now().isoformat()
         }).execute()
@@ -395,6 +406,7 @@ def get_user_profile(user_id: str) -> Optional[Dict]:
         print(f"[PROFILE] ⚠️ No profile found, creating one...")
         supabase.table("user_profiles").insert({
             "user_id": user_id,
+            "personality_choice": "female",
             "created_at": datetime.now().isoformat()
         }).execute()
         return None
@@ -594,7 +606,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = get_or_create_user(user_id_telegram)
     
-    # === AUTO SAVE NAME IF USER TELLS IT ===
+    # === AUTO SAVE NAME IF USER TELLS IT - NEW ===
     profile = get_user_profile(user_id)
 
     if profile and not profile.get("user_name"):
@@ -604,17 +616,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Extract name after "my name is"
             name = user_text.lower().split("my name is")[-1].strip().split(" ")[0]
             print(f"[DB] Auto-detected name: {name}")
-            
-            # Save to database
             update_user_profile(user_id, {"user_name": name.capitalize()})
             print(f"[DB] ✅ Name saved to database: {name.capitalize()}")
-            
-            # Acknowledge to user
             await update.message.reply_text(f"got it, nice to meet you {name}! 😊")
             return
 
         if "i'm" in lower_text or "i am" in lower_text:
-            # Handle "I'm John" or "I am John"
             if "i'm" in lower_text:
                 name = user_text.lower().split("i'm")[-1].strip().split(" ")[0]
             else:
@@ -623,7 +630,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[DB] Auto-detected name: {name}")
             update_user_profile(user_id, {"user_name": name.capitalize()})
             print(f"[DB] ✅ Name saved: {name.capitalize()}")
-            
             await update.message.reply_text(f"nice {name}! 👋")
             return
 
@@ -900,14 +906,15 @@ def main():
     print("  ✅ Text conversations with personality")
     print("  ✅ Voice transcription (Groq Whisper)")
     print("  ✅ Voice generation (gTTS)")
-    print("  ✅ Image generation (Replicate)")
+    print("  ✅ Image generation (Pollinations.ai)")
     print("  ✅ User profiling & onboarding")
     print("  ✅ Daily 24-hour check-ins")
     print("  ✅ One voice note per user per day")
     print("  ✅ Humanistic error messages")
     print("  ✅ Detailed logging for Railway")
     print("  ✅ Response cleaning (no LLM thinking)")
-    print("  ✅ Name auto-save when user tells it")
+    print("  ✅ Personality system (M/F/NB)")
+    print("  ✅ Auto-save user name")
     print("="*70)
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
