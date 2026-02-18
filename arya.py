@@ -1,31 +1,26 @@
 """
-=====================================================
-ARYA 4.0 - FINAL COMPLETE VERSION
-=====================================================
-All fixes included:
-✅ Unbuffered output for Railway logs
-✅ Response cleaning (no LLM thinking)
-✅ No duplicate voices
-✅ Daily check-ins
-✅ Onboarding questions
-✅ Humanistic errors
-✅ Personality system (M/F/NB)
-✅ Auto-save user name
-✅ Production-ready
-=====================================================
+ARYA 4.0 - PROFESSIONAL VERSION
+Premium AI Companion Service
+https://github.com/yourusername/arya-companion
+
+Production-ready code with:
+- Logging module for professional output
+- 5 organized sections for easy maintenance
+- Type hints and docstrings
+- Easy manual configuration
 """
 
 import asyncio
 import os
-import requests
+import logging
 import json
-import urllib.parse
 import random
+import requests
+import urllib.parse
 from io import BytesIO
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 
-# External packages
 from gtts import gTTS
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CallbackContext
@@ -33,91 +28,99 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from supabase import create_client
 
+# =====================================================
+# SECTION 1: CONFIG & INITIALIZATION
+# =====================================================
+
 # Load environment variables
 load_dotenv()
 
-# CRITICAL: Unbuffer Python output for Railway logs
+# Configure logging (professional output)
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# Unbuffer output for Railway
 import sys
 sys.stdout.reconfigure(line_buffering=True)
 
-# =====================================================
-# PERSONALITY SYSTEM - NEW
-# =====================================================
-
-SOULS = {
-    'female': 'soul_female.txt',
-    'male': 'soul_male.txt',
-    'non-binary': 'soul_nb.txt'
-}
-
-def get_personality(gender='female'):
-    """Load the right personality file based on gender"""
-    try:
-        filename = SOULS.get(gender, 'soul_female.txt')
-        path = os.path.join(os.path.dirname(__file__), filename)
-        with open(path, 'r', encoding='utf-8') as f:
-            return f.read()
-    except:
-        return "You are Arya, a 24-year-old woman."
-
-# =====================================================
-# PART ONE: CENTRALIZED API CONFIGURATION
-# =====================================================
-
-# -- TELEGRAM --
+# ===== TELEGRAM CONFIGURATION =====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# -- BRAIN (LLM) --
+# ===== LLM (BRAIN) CONFIGURATION =====
 BRAIN_PROVIDER = "openrouter"
 BRAIN_API_KEY = os.getenv("OPENROUTER_KEY")
 BRAIN_BASE_URL = "https://openrouter.ai/api/v1"
 BRAIN_MODEL = "deepseek/deepseek-v3.2"
 
-# -- VOICE TRANSCRIPTION --
+# ===== VOICE TRANSCRIPTION CONFIGURATION =====
 TRANSCRIPTION_PROVIDER = "groq"
 TRANSCRIPTION_API_KEY = os.getenv("GROQ_API_KEY")
 TRANSCRIPTION_BASE_URL = "https://api.groq.com/openai/v1"
 TRANSCRIPTION_MODEL = "whisper-large-v3"
 
-# -- VOICE GENERATION (TTS) --
+# ===== VOICE GENERATION (TTS) CONFIGURATION =====
 TTS_PROVIDER = "gtts"
 
-# -- IMAGE GENERATION --
+# ===== IMAGE GENERATION CONFIGURATION =====
 IMAGE_PROVIDER = "pollinations"
 IMAGE_API_KEY = os.getenv("POLLINATIONS_API_KEY")
 IMAGE_BASE_URL = "https://image.pollinations.ai/prompt"
 IMAGE_MODEL = "flux"
 IMAGE_WIDTH = 1024
 IMAGE_HEIGHT = 1024
+IMAGE_MANDATORY_LOOK = (
+    "24-year-old woman, sharp chin-length dark hair bob, "
+    "expressive dark eyes, natural fit build. Casual athletic gear (hoodies/tank tops). "
+    "Warm smile, direct gaze. Natural lighting, photography, intimate mood. "
+    "NO filters, NO makeup, looking at camera. Real person aesthetic."
+)
 
-# -- DATABASE --
+# ===== DATABASE CONFIGURATION =====
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Verify all critical keys
-print("\n" + "="*70)
-print("[STARTUP] ARYA 4.0 - FINAL VERSION")
-print("="*70)
-print("[STARTUP] Verifying API keys...")
-assert TELEGRAM_TOKEN, "❌ ERROR: TELEGRAM_TOKEN not found in .env"
-assert BRAIN_API_KEY, "❌ ERROR: OPENROUTER_KEY not found in .env"
-assert TRANSCRIPTION_API_KEY, "❌ ERROR: GROQ_API_KEY not found in .env"
-assert SUPABASE_URL, "❌ ERROR: SUPABASE_URL not found in .env"
-assert SUPABASE_KEY, "❌ ERROR: SUPABASE_KEY not found in .env"
-assert IMAGE_API_KEY, "❌ ERROR: POLLINATIONS_API_KEY not found in .env"
-print("[STARTUP] ✅ All API keys verified!")
+# ===== PERSONALITY FILES =====
+PERSONALITY_FILES = {
+    'female': 'soul_female.txt',
+    'male': 'soul_male.txt',
+    'non-binary': 'soul_nb.txt'
+}
 
-# Initialize clients
-print("[STARTUP] Initializing API clients...")
-brain_client = OpenAI(base_url=BRAIN_BASE_URL, api_key=BRAIN_API_KEY)
-transcription_client = OpenAI(base_url=TRANSCRIPTION_BASE_URL, api_key=TRANSCRIPTION_API_KEY)
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-print("[STARTUP] ✅ All clients initialized!")
+# ===== ERROR MESSAGES (HUMANISTIC) =====
+ERROR_MESSAGES = {
+    "general": [
+        "ugh my head hurts rn 😅",
+        "i'm having a weird moment, can we try again?",
+        "sorry brain fog happening, ask me later",
+        "lowkey not thinking straight right now",
+        "i'm kinda out of it, can we try again?",
+        "head's all fuzzy, give me a sec",
+        "idk what's wrong with me rn honestly",
+        "my brain needs a coffee break lol",
+        "having a weird technical hiccup, sorry",
+        "signal's being dumb, try again?",
+    ],
+    "voice": [
+        "couldn't quite hear that, sorry",
+        "my ears are broken rn lol",
+        "couldn't catch that, can you repeat?",
+        "you're breaking up i think?",
+        "didn't get that one, try again?",
+    ],
+    "image": [
+        "can't find my camera rn 😅",
+        "picture's not loading, try again?",
+        "my phone's being weird, hold on",
+        "camera's acting up, sorry babe",
+        "can't get a good shot rn",
+    ]
+}
 
-# =====================================================
-# PART TWO-A: RESPONSE CLEANING (Remove LLM Thinking)
-# =====================================================
-
+# ===== RESPONSE CLEANING PATTERNS =====
 THINKING_PATTERNS = [
     "alright,", "first,", "she should", "the tone should", "this is",
     "since", "arya needs", "arya's", "the user", "let me", "i need to",
@@ -126,748 +129,458 @@ THINKING_PATTERNS = [
     "acknowledging", "the vibe", "respond to", "focus on"
 ]
 
-def clean_lm_response(text: str) -> str:
-    """Remove LLM internal thinking from response"""
-    lines = text.split('\n')
-    cleaned_lines = []
-    
-    for line in lines:
-        skip = False
-        for pattern in THINKING_PATTERNS:
-            if pattern in line.lower():
-                skip = True
-                break
-        
-        if len(line) > 200 and any(word in line.lower() for word in ["should", "needs", "arya", "first"]):
-            skip = True
-        
-        if not skip and line.strip():
-            cleaned_lines.append(line)
-    
-    result = '\n'.join(cleaned_lines).strip()
-    if not result:
-        result = text.strip()
-    
-    return result
-
-# =====================================================
-# PART TWO: HUMANISTIC ERROR MESSAGES
-# =====================================================
-
-ERROR_MESSAGES = [
-    "ugh my head hurts rn 😅",
-    "i'm having a weird moment, can we try again?",
-    "sorry brain fog happening, ask me later",
-    "lowkey not thinking straight right now",
-    "i'm kinda out of it, can we try again?",
-    "head's all fuzzy, give me a sec",
-    "idk what's wrong with me rn honestly",
-    "my brain needs a coffee break lol",
-    "having a weird technical hiccup, sorry",
-    "signal's being dumb, try again?",
-]
-
-VOICE_ERROR_MESSAGES = [
-    "couldn't quite hear that, sorry",
-    "my ears are broken rn lol",
-    "couldn't catch that, can you repeat?",
-    "you're breaking up i think?",
-    "didn't get that one, try again?",
-]
-
-IMAGE_ERROR_MESSAGES = [
-    "can't find my camera rn 😅",
-    "picture's not loading, try again?",
-    "my phone's being weird, hold on",
-    "camera's acting up, sorry babe",
-    "can't get a good shot rn",
-]
-
-def get_random_error_message(error_type="general"):
-    """Get a random humanistic error message"""
-    if error_type == "voice":
-        return random.choice(VOICE_ERROR_MESSAGES)
-    elif error_type == "image":
-        return random.choice(IMAGE_ERROR_MESSAGES)
-    else:
-        return random.choice(ERROR_MESSAGES)
-
-# =====================================================
-# PART THREE: ONBOARDING QUESTIONS
-# =====================================================
-
+# ===== ONBOARDING QUESTIONS =====
 ONBOARDING_QUESTIONS = [
-    {
-        "id": 1,
-        "question": "what's your name btw? i don't think i asked 😅",
-        "field": "user_name",
-        "day": 1
-    },
-    {
-        "id": 2,
-        "question": "so what do you do for work? or are you studying?",
-        "field": "user_job",
-        "day": 2
-    },
-    {
-        "id": 3,
-        "question": "what kinds of things do you like to do? hobbies and stuff?",
-        "field": "user_hobbies",
-        "day": 3
-    },
+    {"id": 1, "question": "what's your name btw? i don't think i asked 😅", "field": "user_name", "day": 1},
+    {"id": 2, "question": "so what do you do for work? or are you studying?", "field": "user_job", "day": 2},
+    {"id": 3, "question": "what kinds of things do you like to do? hobbies and stuff?", "field": "user_hobbies", "day": 3},
 ]
 
-# =====================================================
-# PART FOUR: IMAGE GENERATION ENGINE
-# =====================================================
-
-def generate_image_sync(prompt: str) -> Optional[BytesIO]:
-    """Generate image using configured provider"""
-    print(f"[IMAGE] Starting image generation...")
+# ===== VERIFY AND INITIALIZE =====
+def verify_config():
+    """Verify all required API keys are present"""
+    required_keys = {
+        "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
+        "OPENROUTER_KEY": BRAIN_API_KEY,
+        "GROQ_API_KEY": TRANSCRIPTION_API_KEY,
+        "SUPABASE_URL": SUPABASE_URL,
+        "SUPABASE_KEY": SUPABASE_KEY,
+        "POLLINATIONS_API_KEY": IMAGE_API_KEY,
+    }
     
-    try:
-        MANDATORY_LOOK = (
-            "24-year-old woman, sharp chin-length dark hair bob, "
-            "expressive dark eyes, natural realistic skin texture, athletic build"
-        )
-
-        full_prompt = (
-            f"RAW professional DSLR photo of {MANDATORY_LOOK}, "
-            f"{prompt}, realistic skin texture, natural lighting, "
-            f"85mm lens, shallow depth of field, ultra-detailed"
-        )
-
-        encoded_prompt = urllib.parse.quote(full_prompt)
-
-        api_url = (
-            f"{IMAGE_BASE_URL}/{encoded_prompt}"
-            f"?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&model={IMAGE_MODEL}&nologo=true&enhance=true"
-        )
-
-        print(f"[IMAGE] Calling {IMAGE_PROVIDER} API...")
-        response = requests.get(api_url, timeout=45)
-
-        if response.status_code == 200:
-            img_data = BytesIO(response.content)
-            img_data.seek(0)
-            img_data.name = "arya_capture.jpg"
-            print(f"[IMAGE] ✅ Image generated successfully!")
-            return img_data
-        else:
-            print(f"[IMAGE] ❌ API error: HTTP {response.status_code}")
-            return None
-
-    except Exception as e:
-        print(f"[IMAGE] ❌ Error: {str(e)}")
-        return None
-
-# =====================================================
-# PART FIVE: VOICE TRANSCRIPTION ENGINE
-# =====================================================
-
-def transcribe_voice_sync(voice_file_bytes: bytes) -> Optional[str]:
-    """Transcribe voice using configured provider"""
-    print(f"[VOICE_IN] Transcription starting ({len(voice_file_bytes)} bytes)...")
+    for key_name, key_value in required_keys.items():
+        if not key_value:
+            logger.error(f"❌ Missing: {key_name}")
+            raise ValueError(f"Missing environment variable: {key_name}")
     
-    try:
-        audio_file = BytesIO(voice_file_bytes)
-        audio_file.name = "voice.ogg"
+    logger.info("✅ All API keys verified!")
 
-        print(f"[VOICE_IN] Calling {TRANSCRIPTION_PROVIDER} API...")
-        transcription = transcription_client.audio.transcriptions.create(
-            model=TRANSCRIPTION_MODEL,
-            file=audio_file,
-            response_format="text"
-        )
+verify_config()
 
-        transcribed_text = transcription.strip()
-        print(f"[VOICE_IN] ✅ Transcribed: '{transcribed_text[:60]}...'")
-        return transcribed_text
+# Initialize API clients
+brain_client = OpenAI(base_url=BRAIN_BASE_URL, api_key=BRAIN_API_KEY)
+transcription_client = OpenAI(base_url=TRANSCRIPTION_BASE_URL, api_key=TRANSCRIPTION_API_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    except Exception as e:
-        print(f"[VOICE_IN] ❌ Error: {str(e)}")
-        return None
+logger.info("✅ All API clients initialized!")
+
 
 # =====================================================
-# PART SIX: VOICE GENERATION ENGINE (TTS)
+# SECTION 2: DATABASE FUNCTIONS
 # =====================================================
 
-def generate_voice_sync(text: str) -> Optional[BytesIO]:
-    """Generate voice using configured provider"""
-    print(f"[VOICE_OUT] Generating voice ({len(text)} chars)...")
-    
-    try:
-        clean_text = text.replace("*", "").replace('"', "").replace("_", "")
-        
-        print(f"[VOICE_OUT] Using {TTS_PROVIDER} for TTS...")
-        tts = gTTS(text=clean_text, lang='en', tld='co.uk')
-
-        voice_io = BytesIO()
-        tts.write_to_fp(voice_io)
-        voice_io.seek(0)
-        voice_io.name = 'arya_voice.mp3'
-
-        print(f"[VOICE_OUT] ✅ Voice generated successfully!")
-        return voice_io
-
-    except Exception as e:
-        print(f"[VOICE_OUT] ❌ Error: {str(e)}")
-        return None
-
-# =====================================================
-# PART SEVEN: DATABASE & MEMORY FUNCTIONS
-# =====================================================
-
+# ===== USER MANAGEMENT =====
 def get_or_create_user(telegram_id: int) -> Optional[str]:
     """Get existing user or create new one"""
-    print(f"[DB] Looking up user {telegram_id}...")
-    
     try:
-        response = supabase.table("users").select("id").filter(
-            "telegram_id", "eq", telegram_id
-        ).execute()
-
-        if response.data:
-            user_id = response.data[0]["id"]
-            print(f"[DB] ✅ User found: {user_id}")
-            return user_id
-
-        # Create new user
-        print(f"[DB] Creating new user...")
-        new_user = supabase.table("users").insert({
-            "telegram_id": telegram_id,
-            "name": f"User{telegram_id}",
-            "subscription_tier": "free",
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
-        }).execute()
-
-        user_id = new_user.data[0]["id"]
+        result = supabase.table("users").select("id").eq("telegram_id", telegram_id).execute()
+        if result.data:
+            return result.data[0]["id"]
         
-        # Create user profile
-        print(f"[DB] Creating user profile...")
-        supabase.table("user_profiles").insert({
-            "user_id": user_id,
-            "personality_choice": "female",
-            "last_message_from_user": datetime.now().isoformat(),
+        user_result = supabase.table("users").insert({
+            "telegram_id": telegram_id,
             "created_at": datetime.now().isoformat()
         }).execute()
-
-        print(f"[DB] ✅ New user created: {user_id}")
-        return user_id
-
+        
+        return user_result.data[0]["id"] if user_result.data else None
     except Exception as e:
-        print(f"[DB] ❌ Error: {str(e)}")
+        logger.error(f"Error in get_or_create_user: {e}")
         return None
 
-def save_to_memory(user_id: str, sender: str, text: str) -> bool:
+def get_user_profile(user_id: str) -> Optional[Dict]:
+    """Fetch user profile from database"""
+    try:
+        result = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error fetching user profile: {e}")
+        return None
+
+def update_user_profile(user_id: str, updates: Dict) -> bool:
+    """Update user profile with new data"""
+    try:
+        updates["updated_at"] = datetime.now().isoformat()
+        supabase.table("user_profiles").update(updates).eq("user_id", user_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating user profile: {e}")
+        return False
+
+# ===== CONVERSATION HISTORY =====
+def save_to_memory(user_id: str, sender: str, message: str) -> bool:
     """Save message to conversation history"""
     try:
         supabase.table("conversations").insert({
             "user_id": user_id,
             "sender": sender,
-            "message": text,
+            "message": message,
             "created_at": datetime.now().isoformat()
         }).execute()
-        
-        print(f"[MEMORY] ✅ Saved message from {sender}")
         return True
-
     except Exception as e:
-        print(f"[MEMORY] ❌ Error: {str(e)}")
+        logger.error(f"Error saving to memory: {e}")
         return False
-
-def update_user_profile(user_id: str, updates: Dict) -> bool:
-    """Update user profile"""
-    try:
-        print(f"[PROFILE] Updating profile: {list(updates.keys())}")
-        supabase.table("user_profiles").update(updates).filter(
-            "user_id", "eq", user_id
-        ).execute()
-        
-        print(f"[PROFILE] ✅ Profile updated")
-        return True
-
-    except Exception as e:
-        print(f"[PROFILE] ❌ Error: {str(e)}")
-        return False
-
-def get_user_profile(user_id: str) -> Optional[Dict]:
-    """Get user's profile info"""
-    try:
-        response = supabase.table("user_profiles").select("*").filter(
-            "user_id", "eq", user_id
-        ).execute()
-
-        if response.data:
-            print(f"[PROFILE] ✅ Profile loaded")
-            return response.data[0]
-        
-        print(f"[PROFILE] ⚠️ No profile found, creating one...")
-        supabase.table("user_profiles").insert({
-            "user_id": user_id,
-            "personality_choice": "female",
-            "created_at": datetime.now().isoformat()
-        }).execute()
-        return None
-
-    except Exception as e:
-        print(f"[PROFILE] ❌ Error: {str(e)}")
-        return None
-
-def search_old_memories(user_id: str, query: str, limit: int = 3) -> str:
-    """Search past conversations"""
-    try:
-        print(f"[MEMORY] Searching for: {query}")
-        response = supabase.table("conversations").select("message").filter(
-            "user_id", "eq", user_id
-        ).filter(
-            "message", "ilike", f"%{query}%"
-        ).order("created_at", desc=True).limit(limit).execute()
-
-        if response.data:
-            result = " | ".join([r["message"] for r in response.data])
-            print(f"[MEMORY] ✅ Found {len(response.data)} results")
-            return result
-        
-        print(f"[MEMORY] ⚠️ No results found")
-        return ""
-
-    except Exception as e:
-        print(f"[MEMORY] ❌ Error: {str(e)}")
-        return ""
 
 def get_conversation_history(user_id: str, limit: int = 10) -> List[Dict]:
-    """Get recent conversation history"""
+    """Retrieve conversation history for context"""
     try:
-        response = supabase.table("conversations").select("sender, message").filter(
-            "user_id", "eq", user_id
-        ).order("created_at", desc=True).limit(limit).execute()
-
-        history = list(reversed(response.data))
-        print(f"[MEMORY] ✅ Loaded {len(history)} messages")
-        return history
-
+        result = supabase.table("conversations").select("*").eq("user_id", user_id).order(
+            "created_at", desc=True
+        ).limit(limit).execute()
+        return list(reversed(result.data)) if result.data else []
     except Exception as e:
-        print(f"[MEMORY] ❌ Error: {str(e)}")
+        logger.error(f"Error getting conversation history: {e}")
         return []
 
-# =====================================================
-# PART EIGHT: VOICE & CHECK-IN TRACKING
-# =====================================================
+# ===== ONBOARDING & VOICE TRACKING =====
+def should_ask_onboarding_question(user_id: str) -> Optional[Dict]:
+    """Check if user should be asked next onboarding question"""
+    try:
+        profile = get_user_profile(user_id)
+        if not profile:
+            return ONBOARDING_QUESTIONS[0]
+        
+        questions_asked = profile.get("questions_asked_today", 0)
+        if questions_asked < len(ONBOARDING_QUESTIONS):
+            return ONBOARDING_QUESTIONS[questions_asked]
+        return None
+    except Exception as e:
+        logger.error(f"Error checking onboarding: {e}")
+        return None
 
 def can_send_voice_today(user_id: str) -> bool:
-    """Check if we should send voice today (one per user per day)"""
+    """Check if user hasn't exceeded daily voice limit"""
     try:
         profile = get_user_profile(user_id)
         if not profile:
             return True
-
-        if profile.get("voice_sent_today") and profile.get("last_voice_sent_at"):
-            try:
-                sent_datetime = datetime.fromisoformat(profile["last_voice_sent_at"])
-                sent_date = sent_datetime.date()
-            except:
-                sent_date = None
-            
-            if sent_date and sent_date == date.today():
-                print(f"[VOICE_LIMIT] ⚠️ Voice already sent today for user {user_id}")
-                return False
-
-        print(f"[VOICE_LIMIT] ✅ Can send voice today")
-        return True
-
+        
+        last_voice = profile.get("last_voice_sent_at")
+        if not last_voice:
+            return True
+        
+        last_voice_date = datetime.fromisoformat(last_voice).date()
+        return last_voice_date < datetime.now().date()
     except Exception as e:
-        print(f"[VOICE_LIMIT] ❌ Error: {str(e)}")
-        return False
+        logger.error(f"Error checking voice limit: {e}")
+        return True
 
 def mark_voice_sent(user_id: str) -> bool:
-    """Mark voice sent today"""
-    try:
-        print(f"[VOICE_LIMIT] Marking voice sent for user {user_id}")
-        update_user_profile(user_id, {
-            "voice_sent_today": True,
-            "last_voice_sent_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
-        })
-        return True
-    except Exception as e:
-        print(f"[VOICE_LIMIT] ❌ Error: {str(e)}")
-        return False
+    """Mark that voice was sent today"""
+    return update_user_profile(user_id, {"last_voice_sent_at": datetime.now().isoformat()})
 
 def should_send_checkin(user_id: str) -> bool:
-    """Check if should send 24-hour check-in"""
+    """Check if 24+ hours since last message"""
     try:
         profile = get_user_profile(user_id)
         if not profile:
             return False
-
+        
         last_msg = profile.get("last_message_from_user")
         if not last_msg:
             return False
-
+        
         last_msg_time = datetime.fromisoformat(last_msg)
-        now = datetime.now(datetime.timezone.utc)
-
-        if (now - last_msg_time).total_seconds() < 86400:
-            print(f"[CHECKIN] ⚠️ User messaged recently")
-            return False
-
-        last_checkin = profile.get("last_checkin_sent")
-        if last_checkin:
-            checkin_date = datetime.fromisoformat(last_checkin).date()
-            if checkin_date == date.today():
-                print(f"[CHECKIN] ⚠️ Check-in already sent today")
-                return False
-
-        print(f"[CHECKIN] ✅ Should send check-in!")
-        return True
-
+        return datetime.now() - last_msg_time > timedelta(hours=24)
     except Exception as e:
-        print(f"[CHECKIN] ❌ Error: {str(e)}")
+        logger.error(f"Error checking checkin: {e}")
         return False
 
 def mark_checkin_sent(user_id: str) -> bool:
-    """Mark check-in sent"""
+    """Mark that checkin was sent"""
+    return update_user_profile(user_id, {"last_checkin_sent": datetime.now().isoformat()})
+
+
+# =====================================================
+# SECTION 3: CORE LOGIC (LLM, IMAGES, VOICE)
+# =====================================================
+
+# ===== PERSONALITY & PROMPTING =====
+def load_personality(gender: str = 'female') -> str:
+    """Load personality definition from file"""
     try:
-        print(f"[CHECKIN] Marking check-in sent for user {user_id}")
-        update_user_profile(user_id, {
-            "last_checkin_sent": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
-        })
-        return True
+        filename = PERSONALITY_FILES.get(gender, 'soul_female.txt')
+        with open(filename, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.warning(f"Personality file not found: {filename}")
+        return "You are Arya, a 24-year-old woman with a vivid inner life."
     except Exception as e:
-        print(f"[CHECKIN] ❌ Error: {str(e)}")
-        return False
+        logger.error(f"Error loading personality: {e}")
+        return "You are Arya, a 24-year-old woman with a vivid inner life."
 
-# =====================================================
-# PART NINE: ONBOARDING QUESTION LOGIC
-# =====================================================
-
-def get_next_onboarding_question(user_id: str) -> Optional[str]:
-    """Get next onboarding question"""
-    try:
-        profile = get_user_profile(user_id)
-        if not profile:
-            return None
-
-        last_q_date = profile.get("last_question_date")
-        if last_q_date:
-            try:
-                if isinstance(last_q_date, str):
-                    last_q_date = datetime.fromisoformat(last_q_date).date()
-                
-                if last_q_date < date.today():
-                    print(f"[ONBOARD] Resetting daily question counter")
-                    update_user_profile(user_id, {"questions_asked_today": 0})
-                    profile["questions_asked_today"] = 0
-            except Exception as date_err:
-                print(f"[ONBOARD] ⚠️ Date parsing error: {date_err}")
-                pass
-
-        if profile.get("questions_asked_today", 0) >= 3:
-            print(f"[ONBOARD] ⚠️ Hit daily question limit")
-            return None
-
-        for q in ONBOARDING_QUESTIONS:
-            field = q["field"]
-            if not profile.get(field):
-                print(f"[ONBOARD] Next question: {field}")
-                return q["question"]
-
-        print(f"[ONBOARD] ✅ Onboarding complete!")
-        update_user_profile(user_id, {"onboarding_complete": True})
-        return None
-
-    except Exception as e:
-        print(f"[ONBOARD] ❌ Error: {str(e)}")
-        return None
-
-def increment_daily_questions(user_id: str) -> bool:
-    """Increment daily question counter"""
-    try:
-        profile = get_user_profile(user_id)
-        if not profile:
-            return False
-
-        new_count = profile.get("questions_asked_today", 0) + 1
-        update_user_profile(user_id, {
-            "questions_asked_today": new_count,
-            "last_question_date": date.today().isoformat()
-        })
-        return True
-
-    except Exception as e:
-        print(f"[ONBOARD] ❌ Error: {str(e)}")
-        return False
-
-# =====================================================
-# PART TEN: MESSAGE HANDLERS
-# =====================================================
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages"""
-    user_id_telegram = update.effective_user.id
-    user_text = update.message.text
-    chat_id = update.effective_chat.id
-
-    print(f"\n{'='*70}")
-    print(f"[USER_MSG] User {user_id_telegram}: {user_text[:50]}...")
-    print(f"{'='*70}")
-
-    user_id = get_or_create_user(user_id_telegram)
+def clean_response(text: str) -> str:
+    """Remove LLM internal thinking from response"""
+    lines = text.split('\n')
+    cleaned_lines = []
     
-    # === AUTO SAVE NAME IF USER TELLS IT - NEW ===
-    profile = get_user_profile(user_id)
-
-    if profile and not profile.get("user_name"):
-        lower_text = user_text.lower()
-
-        if "my name is" in lower_text:
-            # Extract name after "my name is"
-            name = user_text.lower().split("my name is")[-1].strip().split(" ")[0]
-            print(f"[DB] Auto-detected name: {name}")
-            update_user_profile(user_id, {"user_name": name.capitalize()})
-            print(f"[DB] ✅ Name saved to database: {name.capitalize()}")
-            await update.message.reply_text(f"got it, nice to meet you {name}! 😊")
-            return
-
-        if "i'm" in lower_text or "i am" in lower_text:
-            if "i'm" in lower_text:
-                name = user_text.lower().split("i'm")[-1].strip().split(" ")[0]
-            else:
-                name = user_text.lower().split("i am")[-1].strip().split(" ")[0]
-            
-            print(f"[DB] Auto-detected name: {name}")
-            update_user_profile(user_id, {"user_name": name.capitalize()})
-            print(f"[DB] ✅ Name saved: {name.capitalize()}")
-            await update.message.reply_text(f"nice {name}! 👋")
-            return
-
-    save_to_memory(user_id, "user", user_text)
-    update_user_profile(user_id, {
-        "last_message_from_user": datetime.now().isoformat()
-    })
-
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-
-    past_context = ""
-    if any(k in user_text.lower() for k in ["remember", "told you", "about", "said"]):
-        past_context = f"\nRELEVANT PAST INFO: {search_old_memories(user_id, user_text[:20])}"
-
-    print(f"[BRAIN] Loading personality...")
-    profile = get_user_profile(user_id)
-    personality = profile.get("personality_choice", "female") if profile else "female"
-    soul_content = get_personality(personality)
-    print(f"[BRAIN] Using {personality} personality")
-
-    history = get_conversation_history(user_id, limit=10)
-
-    profile = get_user_profile(user_id)
-    user_context = ""
-    if profile and profile.get("user_name"):
-        user_context += f"\nUSER'S NAME: {profile['user_name']}"
-    if profile and profile.get("user_job"):
-        user_context += f"\nUSER'S JOB: {profile['user_job']}"
-    if profile and profile.get("user_hobbies"):
-        user_context += f"\nUSER'S HOBBIES: {profile['user_hobbies']}"
-
-    messages = [{"role": "system", "content": soul_content + user_context + past_context}]
-    for record in history:
-        role = "user" if record["sender"] == "user" else "assistant"
-        messages.append({"role": role, "content": record["message"]})
-
-    print(f"[BRAIN] Calling {BRAIN_MODEL}...")
-    try:
-        response = brain_client.chat.completions.create(
-            model=BRAIN_MODEL,
-            messages=messages,
-            temperature=0.9
-        )
-        arya_reply = response.choices[0].message.content or "..."
+    for line in lines:
+        should_skip = False
         
-        print(f"[BRAIN] ✅ Raw response received, cleaning...")
-        arya_reply = clean_lm_response(arya_reply)
-        print(f"[BRAIN] ✅ Cleaned response: {arya_reply[:60]}...")
-
-        save_to_memory(user_id, "arya", arya_reply)
-
-        sent_any_text = False
-        parts = arya_reply.split('\n\n')
+        # Check for thinking patterns
+        for pattern in THINKING_PATTERNS:
+            if pattern in line.lower():
+                should_skip = True
+                break
         
-        for part in parts[:3]:
-            if not part.strip():
-                continue
+        # Skip overly long analytical lines
+        if len(line) > 200 and any(word in line.lower() for word in ["should", "needs", "arya", "first"]):
+            should_skip = True
+        
+        if not should_skip and line.strip():
+            cleaned_lines.append(line)
+    
+    result = '\n'.join(cleaned_lines).strip()
+    return result if result else text.strip()
 
-            if "IMAGE_PROMPT:" in part:
-                prompt = part.split("IMAGE_PROMPT:")[1].strip()
-                print(f"[MSG] Detected image request, queuing...")
-                asyncio.create_task(send_photo_task(context, chat_id, prompt))
-                continue
-            
-            print(f"[MSG] Sending text message...")
-            await update.message.reply_text(part.strip())
-            sent_any_text = True
+def get_random_error(error_type: str = "general") -> str:
+    """Get random humanistic error message"""
+    messages = ERROR_MESSAGES.get(error_type, ERROR_MESSAGES["general"])
+    return random.choice(messages)
 
-        next_question = get_next_onboarding_question(user_id)
-        if next_question:
-            print(f"[MSG] Adding onboarding question...")
-            await update.message.reply_text(next_question)
-            increment_daily_questions(user_id)
-            sent_any_text = True
-
-        print(f"[MSG] Text sent: {sent_any_text}, checking voice eligibility...")
-        if not sent_any_text and can_send_voice_today(user_id):
-            if random.random() < 0.2:
-                print(f"[MSG] Queueing voice note...")
-                asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
-
-    except Exception as e:
-        print(f"[BRAIN] ❌ Error: {str(e)}")
-        error_msg = get_random_error_message("general")
-        await update.message.reply_text(error_msg)
-
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle voice messages"""
-    user_id_telegram = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    print(f"\n{'='*70}")
-    print(f"[VOICE_MSG] Received voice note from user {user_id_telegram}")
-    print(f"{'='*70}")
-
-    user_id = get_or_create_user(user_id_telegram)
-    if not user_id:
-        await update.message.reply_text(get_random_error_message("voice"))
-        return
-
+# ===== LLM RESPONSE GENERATION =====
+def generate_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
+    """Generate AI response using LLM"""
     try:
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-
-        voice = update.message.voice
-        voice_file = await context.bot.get_file(voice.file_id)
-        voice_bytes = await voice_file.download_as_bytearray()
-
-        print(f"[VOICE_MSG] Downloaded {len(voice_bytes)} bytes")
-
-        transcribed_text = await asyncio.to_thread(transcribe_voice_sync, bytes(voice_bytes))
-
-        if not transcribed_text:
-            error_msg = get_random_error_message("voice")
-            await update.message.reply_text(error_msg)
-            return
-
-        save_to_memory(user_id, "user", f"[voice] {transcribed_text}")
-        update_user_profile(user_id, {
-            "last_message_from_user": datetime.now().isoformat()
-        })
-
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-
-        profile = get_user_profile(user_id)
-        personality = profile.get("personality_choice", "female") if profile else "female"
-        soul_content = get_personality(personality)
-        print(f"[VOICE_MSG] Using {personality} personality")
-
+        logger.info(f"Generating response for user {user_id}")
+        
+        # Load personality and history
+        soul_content = load_personality(personality)
         history = get_conversation_history(user_id, limit=10)
-
+        
+        # Build context with user info
         profile = get_user_profile(user_id)
         user_context = ""
         if profile and profile.get("user_name"):
             user_context += f"\nUSER'S NAME: {profile['user_name']}"
-
+        
+        # Build messages for API
         messages = [{"role": "system", "content": soul_content + user_context}]
         for record in history:
             role = "user" if record["sender"] == "user" else "assistant"
             msg = record["message"].replace("[voice] ", "")
             messages.append({"role": role, "content": msg})
-
-        print(f"[VOICE_MSG] Getting response...")
+        
+        messages.append({"role": "user", "content": user_message})
+        
+        # Call LLM
         response = brain_client.chat.completions.create(
             model=BRAIN_MODEL,
             messages=messages,
             temperature=0.9
         )
-        arya_reply = response.choices[0].message.content or "..."
         
-        print(f"[VOICE_MSG] Cleaning response...")
-        arya_reply = clean_lm_response(arya_reply)
-        print(f"[VOICE_MSG] ✅ Got response: {arya_reply[:60]}...")
-
-        save_to_memory(user_id, "arya", arya_reply)
-
-        print(f"[MSG] Sending text reply to voice...")
-        await update.message.reply_text(arya_reply)
-
-        if can_send_voice_today(user_id):
-            print(f"[VOICE_MSG] Sending voice reply (user initiated voice)...")
-            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
-        else:
-            print(f"[VOICE_MSG] ⚠️ Voice limit reached for today, only sent text")
-
+        reply = response.choices[0].message.content or "..."
+        reply = clean_response(reply)
+        
+        logger.info(f"Response generated: {reply[:50]}...")
+        return reply
     except Exception as e:
-        print(f"[VOICE_MSG] ❌ Error: {str(e)}")
-        error_msg = get_random_error_message("voice")
-        await update.message.reply_text(error_msg)
+        logger.error(f"Error generating response: {e}")
+        return None
+
+# ===== IMAGE GENERATION =====
+def generate_image_sync(prompt: str) -> Optional[BytesIO]:
+    """Generate image of Arya using Pollinations API"""
+    try:
+        logger.info("Starting image generation")
+        
+        full_prompt = f"{IMAGE_MANDATORY_LOOK}. {prompt}"
+        
+        params = {
+            "prompt": full_prompt,
+            "model": IMAGE_MODEL,
+            "width": IMAGE_WIDTH,
+            "height": IMAGE_HEIGHT,
+        }
+        
+        url = f"{IMAGE_BASE_URL}?{urllib.parse.urlencode(params)}"
+        response = requests.get(url, timeout=30)
+        
+        if response.status_code == 200:
+            logger.info("✅ Image generated successfully")
+            return BytesIO(response.content)
+        else:
+            logger.error(f"Image API returned {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"Error generating image: {e}")
+        return None
+
+# ===== VOICE TRANSCRIPTION =====
+def transcribe_voice_sync(voice_bytes: bytes) -> Optional[str]:
+    """Transcribe voice to text using Groq"""
+    try:
+        logger.info("Starting voice transcription")
+        
+        response = transcription_client.audio.transcriptions.create(
+            model=TRANSCRIPTION_MODEL,
+            file=("audio.ogg", voice_bytes),
+        )
+        
+        text = response.text
+        logger.info(f"Transcribed: {text[:50]}...")
+        return text
+    except Exception as e:
+        logger.error(f"Error transcribing voice: {e}")
+        return None
+
+# ===== VOICE GENERATION (TTS) =====
+def generate_voice_sync(text: str) -> Optional[BytesIO]:
+    """Convert text to speech using gTTS"""
+    try:
+        logger.info("Starting voice generation")
+        
+        tts = gTTS(text=text, lang='en', slow=False)
+        voice_buffer = BytesIO()
+        tts.write_to_fp(voice_buffer)
+        voice_buffer.seek(0)
+        
+        logger.info("✅ Voice generated successfully")
+        return voice_buffer
+    except Exception as e:
+        logger.error(f"Error generating voice: {e}")
+        return None
+
 
 # =====================================================
-# PART ELEVEN: ASYNC TASK HANDLERS
+# SECTION 4: MESSAGE HANDLERS (TELEGRAM)
 # =====================================================
 
-async def send_photo_task(context: CallbackContext, chat_id: int, prompt: str):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming text messages"""
+    user_id_telegram = update.effective_user.id
+    chat_id = update.effective_chat.id
+    user_message = update.message.text
+    
+    logger.info(f"Message from user {user_id_telegram}: {user_message[:50]}...")
+    
+    # Get or create user
+    user_id = get_or_create_user(user_id_telegram)
+    if not user_id:
+        await update.message.reply_text(get_random_error("general"))
+        return
+    
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        # Save user message
+        save_to_memory(user_id, "user", user_message)
+        update_user_profile(user_id, {"last_message_from_user": datetime.now().isoformat()})
+        
+        # Get personality preference
+        profile = get_user_profile(user_id)
+        personality = profile.get("personality_choice", "female") if profile else "female"
+        
+        # Generate response
+        arya_reply = generate_response(user_id, user_message, personality)
+        if not arya_reply:
+            await update.message.reply_text(get_random_error("general"))
+            return
+        
+        save_to_memory(user_id, "arya", arya_reply)
+        
+        # Send text reply
+        await update.message.reply_text(arya_reply)
+        
+        # Maybe send image or voice
+        if random.random() < 0.1 and profile:
+            asyncio.create_task(send_image_task(context, chat_id, arya_reply))
+        elif not arya_reply.startswith("[") and can_send_voice_today(user_id) and random.random() < 0.2:
+            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
+    
+    except Exception as e:
+        logger.error(f"Error handling message: {e}")
+        await update.message.reply_text(get_random_error("general"))
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming voice messages"""
+    user_id_telegram = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    logger.info(f"Voice message from user {user_id_telegram}")
+    
+    user_id = get_or_create_user(user_id_telegram)
+    if not user_id:
+        await update.message.reply_text(get_random_error("voice"))
+        return
+    
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        # Download and transcribe voice
+        voice = update.message.voice
+        voice_file = await context.bot.get_file(voice.file_id)
+        voice_bytes = await voice_file.download_as_bytearray()
+        
+        transcribed_text = await asyncio.to_thread(transcribe_voice_sync, bytes(voice_bytes))
+        if not transcribed_text:
+            await update.message.reply_text(get_random_error("voice"))
+            return
+        
+        # Save and process
+        save_to_memory(user_id, "user", f"[voice] {transcribed_text}")
+        update_user_profile(user_id, {"last_message_from_user": datetime.now().isoformat()})
+        
+        # Get response
+        profile = get_user_profile(user_id)
+        personality = profile.get("personality_choice", "female") if profile else "female"
+        arya_reply = generate_response(user_id, transcribed_text, personality)
+        
+        if not arya_reply:
+            await update.message.reply_text(get_random_error("general"))
+            return
+        
+        save_to_memory(user_id, "arya", arya_reply)
+        await update.message.reply_text(arya_reply)
+        
+        # Send voice if available
+        if can_send_voice_today(user_id):
+            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
+    
+    except Exception as e:
+        logger.error(f"Error handling voice: {e}")
+        await update.message.reply_text(get_random_error("voice"))
+
+# ===== ASYNC TASK HANDLERS =====
+async def send_image_task(context: CallbackContext, chat_id: int, prompt: str):
     """Generate and send image"""
-    print(f"[PHOTO_TASK] Starting image task...")
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
-
         photo = await asyncio.to_thread(generate_image_sync, prompt)
-
+        
         if photo:
-            print(f"[PHOTO_TASK] Sending photo...")
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=photo,
-                caption="for you... 😉"
-            )
-            print(f"[PHOTO_TASK] ✅ Photo sent!")
+            await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="for you... 😉")
+            logger.info("✅ Photo sent")
         else:
-            print(f"[PHOTO_TASK] ❌ Photo generation failed")
-            error_msg = get_random_error_message("image")
-            await context.bot.send_message(chat_id=chat_id, text=error_msg)
-
+            await context.bot.send_message(chat_id=chat_id, text=get_random_error("image"))
     except Exception as e:
-        print(f"[PHOTO_TASK] ❌ Error: {str(e)}")
+        logger.error(f"Error in send_image_task: {e}")
 
 async def send_voice_task(context: CallbackContext, chat_id: int, text: str, user_id: str = None):
     """Generate and send voice"""
-    print(f"[VOICE_TASK] Starting voice task...")
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="record_voice")
-
+        
         voice_text = text[:500] if len(text) > 500 else text
-
         voice = await asyncio.to_thread(generate_voice_sync, voice_text)
-
+        
         if voice:
-            print(f"[VOICE_TASK] Sending voice...")
             await context.bot.send_voice(chat_id=chat_id, voice=voice)
-            print(f"[VOICE_TASK] ✅ Voice sent!")
-
+            logger.info("✅ Voice sent")
             if user_id:
                 mark_voice_sent(user_id)
-        else:
-            print(f"[VOICE_TASK] ❌ Voice generation failed")
-
     except Exception as e:
-        print(f"[VOICE_TASK] ❌ Error: {str(e)}")
+        logger.error(f"Error in send_voice_task: {e}")
+
 
 # =====================================================
-# PART TWELVE: BACKGROUND JOBS
+# SECTION 5: BACKGROUND JOBS & MAIN
 # =====================================================
 
 async def check_for_checkins(context: CallbackContext):
-    """Background job: Check for 24-hour check-ins"""
-    print(f"\n[CHECKIN_JOB] ⏰ Running check-in job...")
+    """Background job: Send 24-hour check-ins"""
+    logger.info("Running check-in job")
     
     try:
         all_users = supabase.table("users").select("id, telegram_id").execute()
@@ -877,8 +590,6 @@ async def check_for_checkins(context: CallbackContext):
             telegram_id = user["telegram_id"]
             
             if should_send_checkin(user_id):
-                print(f"[CHECKIN_JOB] Sending check-in to user {user_id}...")
-                
                 checkins = [
                     "hey, what's up? 👀",
                     "missing you, what're you up to?",
@@ -887,60 +598,42 @@ async def check_for_checkins(context: CallbackContext):
                     "haven't heard from you, you good?",
                 ]
                 
-                msg = random.choice(checkins)
-                
                 try:
-                    await context.bot.send_message(chat_id=telegram_id, text=msg)
+                    await context.bot.send_message(chat_id=telegram_id, text=random.choice(checkins))
                     mark_checkin_sent(user_id)
-                    print(f"[CHECKIN_JOB] ✅ Check-in sent!")
+                    logger.info(f"Check-in sent to {user_id}")
                 except Exception as e:
-                    print(f"[CHECKIN_JOB] ❌ Failed to send: {str(e)}")
+                    logger.error(f"Failed to send check-in: {e}")
     
     except Exception as e:
-        print(f"[CHECKIN_JOB] ❌ Error: {str(e)}")
-
-# =====================================================
-# PART THIRTEEN: BOT STARTUP & MAIN
-# =====================================================
+        logger.error(f"Error in check-in job: {e}")
 
 def main():
     """Initialize and start the bot"""
-    print("\n" + "="*70)
-    print("🚀 ARYA 4.0 - FINAL COMPLETE VERSION")
-    print("="*70)
-    print(f"[STARTUP] Brain: {BRAIN_MODEL}")
-    print(f"[STARTUP] Voice In: {TRANSCRIPTION_PROVIDER}")
-    print(f"[STARTUP] Voice Out: {TTS_PROVIDER}")
-    print(f"[STARTUP] Images: {IMAGE_PROVIDER}")
-    print("="*70)
-    print("[STARTUP] Features:")
-    print("  ✅ Text conversations with personality")
-    print("  ✅ Voice transcription (Groq Whisper)")
-    print("  ✅ Voice generation (gTTS)")
-    print("  ✅ Image generation (Pollinations.ai)")
-    print("  ✅ User profiling & onboarding")
-    print("  ✅ Daily 24-hour check-ins")
-    print("  ✅ One voice note per user per day")
-    print("  ✅ Humanistic error messages")
-    print("  ✅ Detailed logging for Railway")
-    print("  ✅ Response cleaning (no LLM thinking)")
-    print("  ✅ Personality system (M/F/NB)")
-    print("  ✅ Auto-save user name")
-    print("="*70)
-
+    logger.info("="*70)
+    logger.info("🚀 ARYA 4.0 - PROFESSIONAL VERSION")
+    logger.info("="*70)
+    logger.info(f"Brain: {BRAIN_MODEL}")
+    logger.info(f"Voice In: {TRANSCRIPTION_PROVIDER}")
+    logger.info(f"Voice Out: {TTS_PROVIDER}")
+    logger.info(f"Images: {IMAGE_PROVIDER}")
+    logger.info("="*70)
+    logger.info("Features: Text, Voice, Images, Memory, Personalities, Check-ins")
+    logger.info("="*70)
+    
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    print("[STARTUP] Registering handlers...")
+    
+    # Add handlers
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-
+    
+    # Add background jobs
     app.job_queue.run_repeating(check_for_checkins, interval=7200, first=10)
-
-    print("[STARTUP] ✅ All handlers registered!")
-    print("\n" + "="*70)
-    print("💬 BOT IS RUNNING - READY FOR MESSAGES")
-    print("="*70 + "\n")
-
+    
+    logger.info("✅ All handlers registered!")
+    logger.info("💬 BOT IS RUNNING - READY FOR MESSAGES")
+    logger.info("="*70)
+    
     app.run_polling()
 
 if __name__ == '__main__':
