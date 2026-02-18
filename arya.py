@@ -1,5 +1,5 @@
 """
-ARYA 4.0 - PROFESSIONAL VERSION
+ARYA 4.0 - PROFESSIONAL VERSION (FIXED)
 Premium AI Companion Service
 https://github.com/yourusername/arya-companion
 
@@ -18,7 +18,7 @@ import random
 import requests
 import urllib.parse
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 
 from gtts import gTTS
@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 # Unbuffer output for Railway
 import sys
 sys.stdout.reconfigure(line_buffering=True)
+
+# Get the directory where this script is located (fixes Railway file path issues)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ===== TELEGRAM CONFIGURATION =====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -179,7 +182,7 @@ def get_or_create_user(telegram_id: int) -> Optional[str]:
         
         user_result = supabase.table("users").insert({
             "telegram_id": telegram_id,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }).execute()
         
         return user_result.data[0]["id"] if user_result.data else None
@@ -199,7 +202,7 @@ def get_user_profile(user_id: str) -> Optional[Dict]:
 def update_user_profile(user_id: str, updates: Dict) -> bool:
     """Update user profile with new data"""
     try:
-        updates["updated_at"] = datetime.now().isoformat()
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         supabase.table("user_profiles").update(updates).eq("user_id", user_id).execute()
         return True
     except Exception as e:
@@ -214,7 +217,7 @@ def save_to_memory(user_id: str, sender: str, message: str) -> bool:
             "user_id": user_id,
             "sender": sender,
             "message": message,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }).execute()
         return True
     except Exception as e:
@@ -259,15 +262,20 @@ def can_send_voice_today(user_id: str) -> bool:
         if not last_voice:
             return True
         
-        last_voice_date = datetime.fromisoformat(last_voice).date()
-        return last_voice_date < datetime.now().date()
+        last_voice_time = datetime.fromisoformat(last_voice)
+        # Make timezone-aware if needed
+        if last_voice_time.tzinfo is None:
+            last_voice_time = last_voice_time.replace(tzinfo=timezone.utc)
+        
+        last_voice_date = last_voice_time.date()
+        return last_voice_date < datetime.now(timezone.utc).date()
     except Exception as e:
         logger.error(f"Error checking voice limit: {e}")
         return True
 
 def mark_voice_sent(user_id: str) -> bool:
     """Mark that voice was sent today"""
-    return update_user_profile(user_id, {"last_voice_sent_at": datetime.now().isoformat()})
+    return update_user_profile(user_id, {"last_voice_sent_at": datetime.now(timezone.utc).isoformat()})
 
 def should_send_checkin(user_id: str) -> bool:
     """Check if 24+ hours since last message"""
@@ -281,14 +289,19 @@ def should_send_checkin(user_id: str) -> bool:
             return False
         
         last_msg_time = datetime.fromisoformat(last_msg)
-        return datetime.now() - last_msg_time > timedelta(hours=24)
+        # Make timezone-aware if needed
+        if last_msg_time.tzinfo is None:
+            last_msg_time = last_msg_time.replace(tzinfo=timezone.utc)
+        
+        now_utc = datetime.now(timezone.utc)
+        return now_utc - last_msg_time > timedelta(hours=24)
     except Exception as e:
         logger.error(f"Error checking checkin: {e}")
         return False
 
 def mark_checkin_sent(user_id: str) -> bool:
     """Mark that checkin was sent"""
-    return update_user_profile(user_id, {"last_checkin_sent": datetime.now().isoformat()})
+    return update_user_profile(user_id, {"last_checkin_sent": datetime.now(timezone.utc).isoformat()})
 
 
 # =====================================================
@@ -300,10 +313,12 @@ def load_personality(gender: str = 'female') -> str:
     """Load personality definition from file"""
     try:
         filename = PERSONALITY_FILES.get(gender, 'soul_female.txt')
-        with open(filename, 'r', encoding='utf-8') as f:
+        filepath = os.path.join(SCRIPT_DIR, filename)
+        
+        with open(filepath, 'r', encoding='utf-8') as f:
             return f.read()
     except FileNotFoundError:
-        logger.warning(f"Personality file not found: {filename}")
+        logger.warning(f"Personality file not found: {filepath}")
         return "You are Arya, a 24-year-old woman with a vivid inner life."
     except Exception as e:
         logger.error(f"Error loading personality: {e}")
@@ -466,7 +481,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Save user message
         save_to_memory(user_id, "user", user_message)
-        update_user_profile(user_id, {"last_message_from_user": datetime.now().isoformat()})
+        update_user_profile(user_id, {"last_message_from_user": datetime.now(timezone.utc).isoformat()})
         
         # Get personality preference
         profile = get_user_profile(user_id)
@@ -520,7 +535,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Save and process
         save_to_memory(user_id, "user", f"[voice] {transcribed_text}")
-        update_user_profile(user_id, {"last_message_from_user": datetime.now().isoformat()})
+        update_user_profile(user_id, {"last_message_from_user": datetime.now(timezone.utc).isoformat()})
         
         # Get response
         profile = get_user_profile(user_id)
@@ -611,7 +626,7 @@ async def check_for_checkins(context: CallbackContext):
 def main():
     """Initialize and start the bot"""
     logger.info("="*70)
-    logger.info("🚀 ARYA 4.0 - PROFESSIONAL VERSION")
+    logger.info("🚀 ARYA 4.0 - PROFESSIONAL VERSION (FIXED)")
     logger.info("="*70)
     logger.info(f"Brain: {BRAIN_MODEL}")
     logger.info(f"Voice In: {TRANSCRIPTION_PROVIDER}")
