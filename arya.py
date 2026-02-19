@@ -1,4 +1,4 @@
-"""
+    """
 ARYA 4.0 - PRODUCTION FINAL VERSION
 Premium AI Companion Service
 Production-ready with proper logging and API robustness
@@ -156,7 +156,7 @@ def verify_config():
         "GROQ_API_KEY": TRANSCRIPTION_API_KEY,
         "SUPABASE_URL": SUPABASE_URL,
         "SUPABASE_KEY": SUPABASE_KEY,
-        "POLLINATIONS_API_KEY": IMAGE_API_KEY,
+        "ETERNAL_AI_API_KEY": ETERNAL_AI_API_KEY,
     }
     
     for key_name, key_value in required_keys.items():
@@ -487,6 +487,7 @@ def generate_image_sync(prompt: str) -> Optional[BytesIO]:
             # Get the image URL from response
             if "data" in result and "image_url" in result["data"]:
                 image_url = result["data"]["image_url"]
+                logger.info(f"Image URL: {image_url}")
                 
                 # Download the image
                 img_response = requests.get(image_url, timeout=30)
@@ -495,6 +496,10 @@ def generate_image_sync(prompt: str) -> Optional[BytesIO]:
                     image_data.seek(0)
                     logger.info("✅ Image generated and downloaded successfully")
                     return image_data
+                else:
+                    logger.error(f"Failed to download image: {img_response.status_code}")
+            else:
+                logger.error(f"Unexpected Eternal AI response format: {result}")    
         else:
             logger.error(f"Eternal AI API error: {response.status_code} - {response.text}")
             return None
