@@ -78,7 +78,10 @@ TTS_PROVIDER = "gtts"
 # ===== IMAGE GENERATION CONFIGURATION =====
 IMAGE_PROVIDER = "eternal_ai"
 ETERNAL_AI_API_KEY = os.getenv("ETERNAL_AI_API_KEY")
-ETERNAL_AI_BASE_URL = "https://open.eternalai.org/creative-ai/image"
+ETERNAL_AI_SUBMIT_URL = "https://agentic.eternalai.org/prompt"
+ETERNAL_AI_POLL_URL = "https://agent-api.eternalai.org/result"
+ETERNAL_AI_AGENT = "uncensored-imagine"
+ETERNAL_AI_MAX_POLLS = 60  # Max 60 seconds of polling
 IMAGE_WIDTH = 1024
 IMAGE_HEIGHT = 1024
 
@@ -446,63 +449,125 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
 
 # ===== IMAGE GENERATION =====
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
-    """Generate image using Eternal AI API"""
+    """
+    Generate image using Eternal AI async API with polling
+    
+    Flow:
+    1. Submit prompt → Get request_id
+    2. Poll for results until status=success
+    3. Download image from result_url
+    """
     try:
-        logger.info("Starting image generation with Eternal AI")
+        logger.info("Starting image generation with Eternal AI (async)")
         
-        # Build the prompt with Arya's look
-        enhanced_prompt = f"{prompt} {IMAGE_MANDATORY_LOOK}"
+        # Step 1: Clean the prompt (remove asterisks from Arya's roleplay)
+        clean_prompt = prompt.replace("*", "").strip()
+        enhanced_prompt = f"{clean_prompt} {IMAGE_MANDATORY_LOOK}"
         
-        # Prepare headers
+        logger.info(f"Prompt: {enhanced_prompt[:100]}...")
+        
+        # Step 2: Submit generation request
         headers = {
             "x-api-key": ETERNAL_AI_API_KEY,
             "Content-Type": "application/json",
             "accept": "application/json"
         }
         
-        # Prepare request data
-        data = {
-            "prompt": enhanced_prompt,
-            "negative_prompt": "blurry, low quality, watermark, distorted",
-            "width": IMAGE_WIDTH,
-            "height": IMAGE_HEIGHT,
-            "num_inference_steps": 25,
-            "guidance_scale": 7.5
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": enhanced_prompt}
+                    ]
+                }
+            ],
+            "agent": ETERNAL_AI_AGENT
         }
         
-        # Make API call
-        logger.info(f"Calling Eternal AI API with prompt: {enhanced_prompt[:80]}...")
+        logger.info("Submitting request to Eternal AI...")
         response = requests.post(
-            ETERNAL_AI_BASE_URL,
+            ETERNAL_AI_SUBMIT_URL,
+            json=payload,
             headers=headers,
-            json=data,
-            timeout=60
+            timeout=10
         )
         
-        # Check if request succeeded
-        if response.status_code == 200:
-            result = response.json()
-            logger.info(f"✅ Eternal AI request successful: {result}")
-            
-            # Get the image URL from response
-            if "data" in result and "image_url" in result["data"]:
-                image_url = result["data"]["image_url"]
-                logger.info(f"Image URL: {image_url}")
-                
-                # Download the image
-                img_response = requests.get(image_url, timeout=30)
-                if img_response.status_code == 200:
-                    image_data = BytesIO(img_response.content)
-                    image_data.seek(0)
-                    logger.info("✅ Image generated and downloaded successfully")
-                    return image_data
-                else:
-                    logger.error(f"Failed to download image: {img_response.status_code}")
-            else:
-                logger.error(f"Unexpected Eternal AI response format: {result}")    
-        else:
-            logger.error(f"Eternal AI API error: {response.status_code} - {response.text}")
+        if response.status_code != 200:
+            logger.error(f"Failed to submit request: {response.status_code} - {response.text}")
             return None
+        
+        result = response.json()
+        request_id = result.get("request_id")
+        
+        if not request_id:
+            logger.error(f"No request_id in response: {result}")
+            return None
+        
+        logger.info(f"✅ Request submitted. ID: {request_id}")
+        
+        # Step 3: Poll for results
+        poll_count = 0
+        while poll_count < ETERNAL_AI_MAX_POLLS:
+            poll_count += 1
+            
+            poll_params = {
+                "agent": ETERNAL_AI_AGENT,
+                "request_id": request_id
+            }
+            
+            poll_response = requests.get(
+                ETERNAL_AI_POLL_URL,
+                params=poll_params,
+                headers={"x-api-key": ETERNAL_AI_API_KEY},
+                timeout=10
+            )
+            
+            if poll_response.status_code == 200:
+                poll_result = poll_response.json()
+                status = poll_result.get("status")
+                
+                logger.info(f"Poll #{poll_count}: status = {status}")
+                
+                if status == "success":
+                    # Image is ready!
+                    image_url = poll_result.get("result_url") or poll_result.get("result_image_url")
+                    
+                    if not image_url:
+                        logger.error(f"Success but no image URL in response: {poll_result}")
+                        return None
+                    
+                    logger.info(f"✅ Image ready at: {image_url[:80]}...")
+                    
+                    # Step 4: Download image
+                    try:
+                        img_response = requests.get(image_url, timeout=30)
+                        if img_response.status_code == 200:
+                            image_data = BytesIO(img_response.content)
+                            image_data.seek(0)
+                            logger.info("✅ Image downloaded successfully")
+                            return image_data
+                        else:
+                            logger.error(f"Failed to download image: {img_response.status_code}")
+                            return None
+                    except Exception as e:
+                        logger.error(f"Error downloading image: {e}")
+                        return None
+                
+                elif status == "failed":
+                    logger.error(f"Image generation failed: {poll_result}")
+                    return None
+                
+                else:  # pending or processing
+                    import time
+                    time.sleep(1)  # Wait 1 second before polling again
+            else:
+                logger.error(f"Poll request failed: {poll_response.status_code}")
+                import time
+                time.sleep(1)
+        
+        logger.error(f"Polling timed out after {ETERNAL_AI_MAX_POLLS} attempts")
+        return None
     
     except Exception as e:
         logger.error(f"Error generating image with Eternal AI: {e}")
