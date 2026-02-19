@@ -282,30 +282,36 @@ def mark_voice_sent(user_id: str) -> bool:
     """Mark that voice was sent today"""
     return update_user_profile(user_id, {"last_voice_sent_at": datetime.now(timezone.utc).isoformat()})
 
+# ===== FIX #1: CHECK-IN FUNCTIONS (FIXED LOGIC) =====
 def should_send_checkin(user_id: str) -> bool:
-    """Check if 24+ hours since last message"""
+    """
+    Check if 6+ hours since last check-in sent
+    FIXED: Now checks last_checkin_sent instead of last_message_from_user
+    """
     try:
         profile = get_user_profile(user_id)
         if not profile:
-            return False
+            return True  # New user, send check-in
         
-        last_msg = profile.get("last_message_from_user")
-        if not last_msg:
-            return False
+        last_checkin = profile.get("last_checkin_sent")
+        if not last_checkin:
+            return True  # Never sent check-in, send now
         
-        last_msg_time = datetime.fromisoformat(last_msg)
-        if last_msg_time.tzinfo is None:
-            last_msg_time = last_msg_time.replace(tzinfo=timezone.utc)
-        
-        now_utc = datetime.now(timezone.utc)
-        return now_utc - last_msg_time > timedelta(hours=24)
+        last_checkin_time = datetime.fromisoformat(last_checkin)
+        time_diff = datetime.now() - last_checkin_time
+        # 6 hours = 21600 seconds
+        return time_diff.total_seconds() > 21600
     except Exception as e:
         logger.error(f"Error checking checkin: {e}")
-        return False
+        return True  # On error, send check-in (don't block user)
 
 def mark_checkin_sent(user_id: str) -> bool:
-    """Mark that checkin was sent"""
-    return update_user_profile(user_id, {"last_checkin_sent": datetime.now(timezone.utc).isoformat()})
+    """Mark that check-in was sent"""
+    try:
+        return update_user_profile(user_id, {"last_checkin_sent": datetime.now().isoformat()})
+    except Exception as e:
+        logger.error(f"Error marking checkin: {e}")
+        return False
 
 
 # =====================================================
@@ -318,92 +324,44 @@ def load_personality(gender: str = 'female') -> str:
     try:
         filename = PERSONALITY_FILES.get(gender, 'soul_female.txt')
         filepath = os.path.join(SCRIPT_DIR, filename)
-        
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.read()
-    except FileNotFoundError:
-        logger.warning(f"Personality file not found: {filepath}")
-        return "You are Arya, a 24-year-old woman with a vivid inner life."
     except Exception as e:
         logger.error(f"Error loading personality: {e}")
-        return "You are Arya, a 24-year-old woman with a vivid inner life."
+        return "You are Arya, a 24-year-old woman with personality."
 
-def clean_response(text: str) -> str:
-    """Remove LLM internal thinking, asterisks, and quotes from response"""
-    # Remove asterisk actions like *laughs*, *pauses*, etc
-    text = re.sub(r'\*[^*]*\*', '', text)
-    
-    # Remove opening/closing quotes from entire response
-    text = text.strip()
-    if text.startswith('"') and text.endswith('"'):
-        text = text[1:-1]
-    if text.startswith("'") and text.endswith("'"):
-        text = text[1:-1]
-    
-    lines = text.split('\n')
-    cleaned_lines = []
-    
-    for line in lines:
-        skip = False
-        for pattern in THINKING_PATTERNS:
-            if pattern in line.lower():
-                skip = True
-                break
-        
-        if len(line) > 200 and any(word in line.lower() for word in ["should", "needs", "arya", "first"]):
-            skip = True
-        
-        if not skip and line.strip():
-            cleaned_lines.append(line)
-    
-    result = '\n'.join(cleaned_lines).strip()
-    if not result:
-        result = text.strip()
-    
-    return result
+def get_random_error(error_type: str = "general") -> str:
+    """Get random error message"""
+    messages = ERROR_MESSAGES.get(error_type, ERROR_MESSAGES["general"])
+    return random.choice(messages)
 
-def split_into_messages(text: str) -> List[str]:
-    """Split long response into 2-3 shorter messages for natural feel"""
-    text = text.strip()
-    
-    # If short, send as one message
-    if len(text) <= 150:
+def clean_response(response: str) -> str:
+    """Remove thinking patterns from response"""
+    text = response.lower()
+    for pattern in THINKING_PATTERNS:
+        text = re.sub(rf'\b{pattern}\b', '', text, flags=re.IGNORECASE)
+    return text.strip()
+
+def split_into_messages(text: str, max_length: int = 1024) -> List[str]:
+    """Split long responses into 2-3 message chunks"""
+    if len(text) <= max_length:
         return [text]
-    
-    # Split by sentences
-    sentences = text.split('. ')
     
     messages = []
     current = ""
     
-    for sentence in sentences:
-        sentence = sentence.strip()
-        if not sentence:
-            continue
-        if not sentence.endswith('.'):
-            sentence += '.'
-        
-        # If adding this would be too long, save current and start new
-        if len(current) + len(sentence) > 180:
+    for sentence in text.split('\n'):
+        if len(current) + len(sentence) > max_length:
             if current:
                 messages.append(current.strip())
             current = sentence
         else:
-            if current:
-                current += " " + sentence
-            else:
-                current = sentence
+            current += ('\n' if current else '') + sentence
     
     if current:
         messages.append(current.strip())
     
-    # Return max 3 messages
-    return messages[:3]
-
-def get_random_error(error_type: str = "general") -> str:
-    """Get random humanistic error message"""
-    messages = ERROR_MESSAGES.get(error_type, ERROR_MESSAGES["general"])
-    return random.choice(messages)
+    return messages[:3]  # Max 3 messages
 
 # ===== LLM RESPONSE GENERATION =====
 def generate_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
@@ -411,74 +369,66 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
     try:
         logger.info(f"Generating response for user {user_id}")
         
-        soul_content = load_personality(personality)
         history = get_conversation_history(user_id, limit=10)
+        soul_content = load_personality(personality)
         
-        profile = get_user_profile(user_id)
-        user_context = ""
-        if profile:
-            if profile.get("user_name"):
-                user_context += f"\nUSER'S NAME: {profile['user_name']}"
-            if profile.get("user_job"):
-                user_context += f"\nUSER'S JOB: {profile['user_job']}"
-            if profile.get("user_hobbies"):
-                user_context += f"\nUSER'S HOBBIES: {profile['user_hobbies']}"
+        messages = [{"role": "system", "content": soul_content}]
         
-        messages = [{"role": "system", "content": soul_content + user_context}]
-        for record in history:
-            role = "user" if record["sender"] == "user" else "assistant"
-            msg = record["message"].replace("[voice] ", "")
-            messages.append({"role": role, "content": msg})
+        for msg in history:
+            role = "user" if msg["sender"] == "user" else "assistant"
+            messages.append({"role": role, "content": msg["message"]})
         
         messages.append({"role": "user", "content": user_message})
         
         response = brain_client.chat.completions.create(
             model=BRAIN_MODEL,
             messages=messages,
-            temperature=0.9
+            max_tokens=500,
+            temperature=0.9,
         )
         
-        reply = response.choices[0].message.content or "..."
-        reply = clean_response(reply)
+        reply = response.choices[0].message.content.strip()
+        cleaned_reply = clean_response(reply)
         
-        logger.info(f"Response generated: {reply[:50]}...")
-        return reply
+        logger.info(f"Response generated: {cleaned_reply[:50]}...")
+        return cleaned_reply
     except Exception as e:
         logger.error(f"Error generating response: {e}")
         return None
 
-# ===== IMAGE GENERATION WITH RETRY =====
-def generate_image_sync(prompt: str, retry_count: int = 0) -> Optional[BytesIO]:
-    """Generate image of Arya with retry logic"""
+# ===== IMAGE GENERATION =====
+def generate_image_sync(prompt: str) -> Optional[BytesIO]:
+    """Generate image using Pollinations API with retry logic"""
     try:
-        logger.info(f"Starting image generation (attempt {retry_count + 1})")
+        logger.info("Starting image generation")
         
-        # Simplify prompt on retries to reduce API failures
-        if retry_count > 0:
-            full_prompt = f"woman with dark hair, casual wear, natural lighting"
-        else:
-            full_prompt = f"{IMAGE_MANDATORY_LOOK}. {prompt}"
+        enhanced_prompt = f"{prompt} {IMAGE_MANDATORY_LOOK}"
+        encoded_prompt = urllib.parse.quote(enhanced_prompt)
         
-        params = {
-            "prompt": full_prompt,
-            "model": IMAGE_MODEL,
-            "width": IMAGE_WIDTH,
-            "height": IMAGE_HEIGHT,
-        }
+        url = f"{IMAGE_BASE_URL}/{encoded_prompt}"
         
-        url = f"{IMAGE_BASE_URL}?{urllib.parse.urlencode(params)}"
-        response = requests.get(url, timeout=30)
+        for attempt in range(3):
+            try:
+                response = requests.get(url, timeout=30)
+                
+                if response.status_code == 200:
+                    image_data = BytesIO(response.content)
+                    logger.info("✅ Image generated successfully")
+                    return image_data
+                elif response.status_code == 503:
+                    logger.warning(f"API busy (attempt {attempt + 1}/3), retrying...")
+                    if attempt < 2:
+                        import time
+                        time.sleep(2 ** attempt)
+                else:
+                    logger.error(f"Image generation failed: {response.status_code}")
+                    break
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1} failed: {e}")
+                if attempt == 2:
+                    raise
         
-        if response.status_code == 200:
-            logger.info("✅ Image generated successfully")
-            return BytesIO(response.content)
-        elif response.status_code >= 500 and retry_count < 1:
-            # Retry once on server errors (5xx)
-            logger.warning(f"Image API returned {response.status_code}, retrying...")
-            return generate_image_sync(prompt, retry_count + 1)
-        else:
-            logger.error(f"Image API returned {response.status_code}")
-            return None
+        return None
     except Exception as e:
         logger.error(f"Error generating image: {e}")
         return None
@@ -649,7 +599,7 @@ async def send_voice_task(context: CallbackContext, chat_id: int, text: str, use
 # =====================================================
 
 async def check_for_checkins(context: CallbackContext):
-    """Background job: Send 24-hour check-ins"""
+    """Background job: Send 6-hour check-ins"""
     logger.info("Running check-in job")
     
     try:
@@ -671,7 +621,7 @@ async def check_for_checkins(context: CallbackContext):
                 try:
                     await context.bot.send_message(chat_id=telegram_id, text=random.choice(checkins))
                     mark_checkin_sent(user_id)
-                    logger.info(f"Check-in sent to {user_id}")
+                    logger.info(f"✅ Check-in sent to {user_id}")
                 except Exception as e:
                     logger.error(f"Failed to send check-in: {e}")
     
@@ -696,7 +646,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     
-    app.job_queue.run_repeating(check_for_checkins, interval=7200, first=10)
+    # FIX #2: Changed interval from 7200 to 5400 seconds (1.5 hours instead of 2 hours)
+    app.job_queue.run_repeating(check_for_checkins, interval=5400, first=10)
     
     logger.info("✅ All handlers registered!")
     logger.info("💬 BOT IS RUNNING - READY FOR MESSAGES")
