@@ -16,6 +16,7 @@ import logging
 import json
 import random
 import requests
+import re
 import urllib.parse
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
@@ -328,73 +329,75 @@ def load_personality(gender: str = 'female') -> str:
         return "You are Arya, a 24-year-old woman with a vivid inner life."
 
 def clean_response(text: str) -> str:
-    """Remove LLM internal thinking and asterisk actions from response"""
+    """Remove LLM internal thinking, asterisks, and quotes from response"""
+    # Remove asterisk actions like *laughs*, *pauses*, etc
+    text = re.sub(r'\*[^*]*\*', '', text)
+    
+    # Remove opening/closing quotes from entire response
+    text = text.strip()
+    if text.startswith('"') and text.endswith('"'):
+        text = text[1:-1]
+    if text.startswith("'") and text.endswith("'"):
+        text = text[1:-1]
+    
     lines = text.split('\n')
     cleaned_lines = []
     
     for line in lines:
-        should_skip = False
-        
-        # ✅ NEW: Skip lines that are pure actions (start and end with asterisks)
-        if line.strip().startswith('*') and line.strip().endswith('*'):
-            should_skip = True
-        
-        # Remove asterisk actions from within text
-        line = line.replace('*', '')
-        
+        skip = False
         for pattern in THINKING_PATTERNS:
             if pattern in line.lower():
-                should_skip = True
+                skip = True
                 break
         
         if len(line) > 200 and any(word in line.lower() for word in ["should", "needs", "arya", "first"]):
-            should_skip = True
+            skip = True
         
-        if not should_skip and line.strip():
-            cleaned_lines.append(line.strip())
+        if not skip and line.strip():
+            cleaned_lines.append(line)
     
     result = '\n'.join(cleaned_lines).strip()
-    return result if result else text.strip()
+    if not result:
+        result = text.strip()
+    
+    return result
 
-def split_response_into_messages(text: str) -> List[str]:
-    """Split long response into 2-3 shorter messages to feel more human"""
+def split_into_messages(text: str) -> List[str]:
+    """Split long response into 2-3 shorter messages for natural feel"""
     text = text.strip()
     
-    # If short enough, return as single message
+    # If short, send as one message
     if len(text) <= 150:
         return [text]
     
-    # Split by periods to create shorter sentences
+    # Split by sentences
     sentences = text.split('. ')
     
     messages = []
-    current_message = ""
+    current = ""
     
     for sentence in sentences:
         sentence = sentence.strip()
         if not sentence:
             continue
-        
-        # Add period back if it was removed by split
         if not sentence.endswith('.'):
             sentence += '.'
         
-        # If adding this sentence would make message too long, save current and start new
-        if len(current_message) + len(sentence) > 200:
-            if current_message:
-                messages.append(current_message.strip())
-            current_message = sentence
+        # If adding this would be too long, save current and start new
+        if len(current) + len(sentence) > 180:
+            if current:
+                messages.append(current.strip())
+            current = sentence
         else:
-            if current_message:
-                current_message += " " + sentence
+            if current:
+                current += " " + sentence
             else:
-                current_message = sentence
+                current = sentence
     
-    # Add remaining message
-    if current_message:
-        messages.append(current_message.strip())
+    if current:
+        messages.append(current.strip())
     
-    # Limit to 3 messages max
+    # Return max 3 messages
     return messages[:3]
 
 def get_random_error(error_type: str = "general") -> str:
@@ -544,16 +547,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         save_to_memory(user_id, "arya", arya_reply)
         
-        # ✅ Split into multiple messages if too long
-        messages = split_response_into_messages(arya_reply)
+        # Split into 2-3 messages if too long
+        messages = split_into_messages(arya_reply)
         for msg in messages:
             await update.message.reply_text(msg)
-            await asyncio.sleep(0.5)  # Small delay between messages to feel natural
+            await asyncio.sleep(0.3)  # Small delay between messages
         
         if random.random() < 0.1 and profile:
             asyncio.create_task(send_image_task(context, chat_id, arya_reply))
-        elif not arya_reply.startswith("[") and can_send_voice_today(user_id) and random.random() < 0.2:
-            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
     
     except Exception as e:
         logger.error(f"Error handling message: {e}")
@@ -596,14 +597,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         save_to_memory(user_id, "arya", arya_reply)
         
-        # ✅ Split into multiple messages if too long
-        messages = split_response_into_messages(arya_reply)
+        # Split into 2-3 messages if too long
+        messages = split_into_messages(arya_reply)
         for msg in messages:
             await update.message.reply_text(msg)
-            await asyncio.sleep(0.5)
-        
-        if can_send_voice_today(user_id):
-            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
+            await asyncio.sleep(0.3)
     
     except Exception as e:
         logger.error(f"Error handling voice: {e}")
