@@ -78,7 +78,7 @@ TTS_PROVIDER = "gtts"
 # ===== IMAGE GENERATION CONFIGURATION =====
 IMAGE_PROVIDER = "eternal_ai"
 ETERNAL_AI_API_KEY = os.getenv("ETERNAL_AI_API_KEY")
-ETERNAL_AI_BASE_URL = "https://open.eternalai.org/generate"
+ETERNAL_AI_BASE_URL = "https://open.eternalai.org/creative-ai/image"
 IMAGE_WIDTH = 1024
 IMAGE_HEIGHT = 1024
 
