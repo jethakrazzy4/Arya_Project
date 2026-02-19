@@ -416,8 +416,13 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
         
         profile = get_user_profile(user_id)
         user_context = ""
-        if profile and profile.get("user_name"):
-            user_context += f"\nUSER'S NAME: {profile['user_name']}"
+        if profile:
+            if profile.get("user_name"):
+                user_context += f"\nUSER'S NAME: {profile['user_name']}"
+            if profile.get("user_job"):
+                user_context += f"\nUSER'S JOB: {profile['user_job']}"
+            if profile.get("user_hobbies"):
+                user_context += f"\nUSER'S HOBBIES: {profile['user_hobbies']}"
         
         messages = [{"role": "system", "content": soul_content + user_context}]
         for record in history:
