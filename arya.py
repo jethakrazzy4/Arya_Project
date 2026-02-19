@@ -328,12 +328,19 @@ def load_personality(gender: str = 'female') -> str:
         return "You are Arya, a 24-year-old woman with a vivid inner life."
 
 def clean_response(text: str) -> str:
-    """Remove LLM internal thinking from response"""
+    """Remove LLM internal thinking and asterisk actions from response"""
     lines = text.split('\n')
     cleaned_lines = []
     
     for line in lines:
         should_skip = False
+        
+        # ✅ NEW: Skip lines that are pure actions (start and end with asterisks)
+        if line.strip().startswith('*') and line.strip().endswith('*'):
+            should_skip = True
+        
+        # Remove asterisk actions from within text
+        line = line.replace('*', '')
         
         for pattern in THINKING_PATTERNS:
             if pattern in line.lower():
@@ -344,10 +351,51 @@ def clean_response(text: str) -> str:
             should_skip = True
         
         if not should_skip and line.strip():
-            cleaned_lines.append(line)
+            cleaned_lines.append(line.strip())
     
     result = '\n'.join(cleaned_lines).strip()
     return result if result else text.strip()
+
+def split_response_into_messages(text: str) -> List[str]:
+    """Split long response into 2-3 shorter messages to feel more human"""
+    text = text.strip()
+    
+    # If short enough, return as single message
+    if len(text) <= 150:
+        return [text]
+    
+    # Split by periods to create shorter sentences
+    sentences = text.split('. ')
+    
+    messages = []
+    current_message = ""
+    
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        
+        # Add period back if it was removed by split
+        if not sentence.endswith('.'):
+            sentence += '.'
+        
+        # If adding this sentence would make message too long, save current and start new
+        if len(current_message) + len(sentence) > 200:
+            if current_message:
+                messages.append(current_message.strip())
+            current_message = sentence
+        else:
+            if current_message:
+                current_message += " " + sentence
+            else:
+                current_message = sentence
+    
+    # Add remaining message
+    if current_message:
+        messages.append(current_message.strip())
+    
+    # Limit to 3 messages max
+    return messages[:3]
 
 def get_random_error(error_type: str = "general") -> str:
     """Get random humanistic error message"""
@@ -495,7 +543,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         save_to_memory(user_id, "arya", arya_reply)
-        await update.message.reply_text(arya_reply)
+        
+        # ✅ Split into multiple messages if too long
+        messages = split_response_into_messages(arya_reply)
+        for msg in messages:
+            await update.message.reply_text(msg)
+            await asyncio.sleep(0.5)  # Small delay between messages to feel natural
         
         if random.random() < 0.1 and profile:
             asyncio.create_task(send_image_task(context, chat_id, arya_reply))
@@ -542,7 +595,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         save_to_memory(user_id, "arya", arya_reply)
-        await update.message.reply_text(arya_reply)
+        
+        # ✅ Split into multiple messages if too long
+        messages = split_response_into_messages(arya_reply)
+        for msg in messages:
+            await update.message.reply_text(msg)
+            await asyncio.sleep(0.5)
         
         if can_send_voice_today(user_id):
             asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
