@@ -320,10 +320,19 @@ def mark_checkin_sent(user_id: str) -> bool:
 
 # ===== PERSONALITY & PROMPTING =====
 def load_personality(gender: str = 'female') -> str:
-    """Load personality definition from file"""
+    """
+    Load personality definition from file
+    Tries soul_female.txt first, then falls back to soul.txt (v105 compatibility)
+    """
     try:
+        # Try new filename first
         filename = PERSONALITY_FILES.get(gender, 'soul_female.txt')
         filepath = os.path.join(SCRIPT_DIR, filename)
+        
+        # If doesn't exist, try old soul.txt name (v105 compatibility)
+        if not os.path.exists(filepath):
+            filepath = os.path.join(SCRIPT_DIR, 'soul.txt')
+        
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
@@ -335,33 +344,68 @@ def get_random_error(error_type: str = "general") -> str:
     messages = ERROR_MESSAGES.get(error_type, ERROR_MESSAGES["general"])
     return random.choice(messages)
 
-def clean_response(response: str) -> str:
-    """Remove thinking patterns from response"""
-    text = response.lower()
-    for pattern in THINKING_PATTERNS:
-        text = re.sub(rf'\b{pattern}\b', '', text, flags=re.IGNORECASE)
-    return text.strip()
+def clean_response(text: str) -> str:
+    """
+    AGGRESSIVE cleaning: Remove thinking patterns AND verbose lines
+    This is the v105 logic that keeps responses SHORT and PUNCHY
+    Removes entire lines with thinking patterns instead of just words
+    """
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        skip = False
+        
+        # Check if line contains thinking patterns
+        for pattern in THINKING_PATTERNS:
+            if pattern in line.lower():
+                skip = True
+                break
+        
+        # Remove long verbose lines (thinking/explanations)
+        # Lines > 200 chars with "should", "needs", "arya", "first" are usually thinking
+        if len(line) > 200 and any(word in line.lower() for word in ["should", "needs", "arya", "first"]):
+            skip = True
+        
+        # Keep short, punchy lines
+        if not skip and line.strip():
+            cleaned_lines.append(line)
+    
+    result = '\n'.join(cleaned_lines).strip()
+    
+    # Fallback if everything was removed
+    if not result:
+        result = text.strip()
+    
+    return result
 
 def split_into_messages(text: str, max_length: int = 1024) -> List[str]:
-    """Split long responses into 2-3 message chunks"""
+    """
+    Split long responses into multiple message bubbles (max 2-3)
+    This mimics real human texting behavior on Telegram
+    """
     if len(text) <= max_length:
         return [text]
     
     messages = []
     current = ""
     
-    for sentence in text.split('\n'):
-        if len(current) + len(sentence) > max_length:
+    # Split by paragraphs/newlines first
+    for paragraph in text.split('\n'):
+        if len(current) + len(paragraph) + 1 > max_length:
             if current:
                 messages.append(current.strip())
-            current = sentence
+                current = paragraph
+            else:
+                messages.append(paragraph)
         else:
-            current += ('\n' if current else '') + sentence
+            current += ('\n' if current else '') + paragraph
     
     if current:
         messages.append(current.strip())
     
-    return messages[:3]  # Max 3 messages
+    # Limit to 3 messages max (real humans don't send more)
+    return messages[:3]
 
 # ===== LLM RESPONSE GENERATION =====
 def generate_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
