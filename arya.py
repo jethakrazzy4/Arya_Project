@@ -76,16 +76,16 @@ TRANSCRIPTION_MODEL = "whisper-large-v3"
 TTS_PROVIDER = "gtts"
 
 # ===== IMAGE GENERATION CONFIGURATION =====
-IMAGE_PROVIDER = "pollinations"
-IMAGE_API_KEY = os.getenv("POLLINATIONS_API_KEY")
-IMAGE_BASE_URL = "https://image.pollinations.ai/prompt"
-IMAGE_MODEL = "flux"
+IMAGE_PROVIDER = "eternal_ai"
+ETERNAL_AI_API_KEY = os.getenv("ETERNAL_AI_API_KEY")
+ETERNAL_AI_BASE_URL = "https://open.eternalai.org/generate"
 IMAGE_WIDTH = 1024
 IMAGE_HEIGHT = 1024
+
 # Simplified mandatory look to reduce API failures
 IMAGE_MANDATORY_LOOK = (
     "24-year-old woman, dark hair bob, dark eyes, athletic build. "
-    "Casual wear. Natural lighting, photography. Real person."
+    "Natural lighting, photography. Real person."
 )
 
 # ===== DATABASE CONFIGURATION =====
@@ -446,39 +446,61 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
 
 # ===== IMAGE GENERATION =====
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
-    """Generate image using Pollinations API with retry logic"""
+    """Generate image using Eternal AI API"""
     try:
-        logger.info("Starting image generation")
+        logger.info("Starting image generation with Eternal AI")
         
+        # Build the prompt with Arya's look
         enhanced_prompt = f"{prompt} {IMAGE_MANDATORY_LOOK}"
-        encoded_prompt = urllib.parse.quote(enhanced_prompt)
         
-        url = f"{IMAGE_BASE_URL}/{encoded_prompt}"
+        # Prepare headers
+        headers = {
+            "x-api-key": ETERNAL_AI_API_KEY,
+            "Content-Type": "application/json",
+            "accept": "application/json"
+        }
         
-        for attempt in range(3):
-            try:
-                response = requests.get(url, timeout=30)
+        # Prepare request data
+        data = {
+            "prompt": enhanced_prompt,
+            "negative_prompt": "blurry, low quality, watermark, distorted",
+            "width": IMAGE_WIDTH,
+            "height": IMAGE_HEIGHT,
+            "num_inference_steps": 25,
+            "guidance_scale": 7.5
+        }
+        
+        # Make API call
+        logger.info(f"Calling Eternal AI API with prompt: {enhanced_prompt[:80]}...")
+        response = requests.post(
+            ETERNAL_AI_BASE_URL,
+            headers=headers,
+            json=data,
+            timeout=60
+        )
+        
+        # Check if request succeeded
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"✅ Eternal AI request successful: {result}")
+            
+            # Get the image URL from response
+            if "data" in result and "image_url" in result["data"]:
+                image_url = result["data"]["image_url"]
                 
-                if response.status_code == 200:
-                    image_data = BytesIO(response.content)
-                    logger.info("✅ Image generated successfully")
+                # Download the image
+                img_response = requests.get(image_url, timeout=30)
+                if img_response.status_code == 200:
+                    image_data = BytesIO(img_response.content)
+                    image_data.seek(0)
+                    logger.info("✅ Image generated and downloaded successfully")
                     return image_data
-                elif response.status_code == 503:
-                    logger.warning(f"API busy (attempt {attempt + 1}/3), retrying...")
-                    if attempt < 2:
-                        import time
-                        time.sleep(2 ** attempt)
-                else:
-                    logger.error(f"Image generation failed: {response.status_code}")
-                    break
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed: {e}")
-                if attempt == 2:
-                    raise
-        
-        return None
+        else:
+            logger.error(f"Eternal AI API error: {response.status_code} - {response.text}")
+            return None
+    
     except Exception as e:
-        logger.error(f"Error generating image: {e}")
+        logger.error(f"Error generating image with Eternal AI: {e}")
         return None
 
 # ===== VOICE TRANSCRIPTION =====
