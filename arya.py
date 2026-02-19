@@ -386,6 +386,21 @@ def clean_response(text: str) -> str:
     
     return result
 
+def should_generate_image(text: str) -> bool:
+    """
+    Check if response contains image-related keywords
+    Returns True if bot is talking about sending/generating images
+    """
+    image_keywords = [
+        "sends a photo", "sends an image", "sends a picture",
+        "here's a photo", "here's an image", "here's a picture",
+        "sending you a photo", "sending you an image",
+        "*sends", "photo", "picture", "image"
+    ]
+    
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in image_keywords)
+
 def split_into_messages(text: str, max_length: int = 1024) -> List[str]:
     """
     Split long responses into multiple message bubbles (max 2-3)
@@ -648,8 +663,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg)
             await asyncio.sleep(0.3)  # Small delay between messages
         
-        if random.random() < 0.1 and profile:
+        # Generate image if response mentions sending one
+        should_generate = should_generate_image(arya_reply)
+        if should_generate and profile:
             asyncio.create_task(send_image_task(context, chat_id, arya_reply))
+            logger.info(f"Image generation triggered by keyword detection")
     
     except Exception as e:
         logger.error(f"Error handling message: {e}")
@@ -707,13 +725,20 @@ async def send_image_task(context: CallbackContext, chat_id: int, prompt: str):
     """Generate and send image"""
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
-        photo = await asyncio.to_thread(generate_image_sync, prompt)
+        
+        # Clean the text (remove asterisks from roleplay)
+        clean_prompt = prompt.replace("*", "").strip()
+        image_prompt = clean_prompt[:300]  # Limit length
+        
+        logger.info(f"Sending to image generation with prompt: {image_prompt[:80]}...")
+        photo = await asyncio.to_thread(generate_image_sync, image_prompt)
         
         if photo:
             await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="for you... 😉")
             logger.info("✅ Photo sent")
         else:
             await context.bot.send_message(chat_id=chat_id, text=get_random_error("image"))
+            logger.info("Image generation returned None")
     except Exception as e:
         logger.error(f"Error in send_image_task: {e}")
 
