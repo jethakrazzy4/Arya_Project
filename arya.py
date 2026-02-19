@@ -1,4 +1,4 @@
-    """
+"""
 ARYA 4.0 - PRODUCTION FINAL VERSION
 Premium AI Companion Service
 Production-ready with proper logging and API robustness
