@@ -36,16 +36,21 @@ from supabase import create_client
 load_dotenv()
 
 # Configure logging to output to STDOUT (not stderr)
+import sys
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[logging.StreamHandler()]  # Force stdout
+    handlers=[logging.StreamHandler(sys.stdout)]  # ✅ FIXED: Explicitly use stdout
 )
 logger = logging.getLogger(__name__)
 
+# Suppress verbose library logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 # Unbuffer output for Railway
-import sys
 sys.stdout.reconfigure(line_buffering=True)
 
 # Get the directory where this script is located
@@ -493,11 +498,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(arya_reply)
         
         if random.random() < 0.1 and profile:
-            task = asyncio.create_task(send_image_task(context, chat_id, arya_reply))
-            task.add_done_callback(lambda t: t.exception() if t.done() and not t.cancelled() else None)
+            asyncio.create_task(send_image_task(context, chat_id, arya_reply))
         elif not arya_reply.startswith("[") and can_send_voice_today(user_id) and random.random() < 0.2:
-            task = asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
-            task.add_done_callback(lambda t: t.exception() if t.done() and not t.cancelled() else None)
+            asyncio.create_task(send_voice_task(context, chat_id, arya_reply, user_id))
     
     except Exception as e:
         logger.error(f"Error handling message: {e}")
@@ -550,26 +553,21 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ASYNC TASK HANDLERS =====
 async def send_image_task(context: CallbackContext, chat_id: int, prompt: str):
-    """Generate and send image with improved error handling"""
+    """Generate and send image"""
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
         photo = await asyncio.to_thread(generate_image_sync, prompt)
         
         if photo:
-            try:
-                await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="for you... 😉")
-                logger.info("✅ Photo sent successfully")
-            except Exception as photo_error:
-                logger.warning(f"Failed to send photo, error: {photo_error}")
+            await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="for you... 😉")
+            logger.info("✅ Photo sent")
         else:
             await context.bot.send_message(chat_id=chat_id, text=get_random_error("image"))
-    except asyncio.CancelledError:
-        logger.info("Image task cancelled")
     except Exception as e:
-        logger.error(f"Error in send_image_task: {e}", exc_info=False)
+        logger.error(f"Error in send_image_task: {e}")
 
 async def send_voice_task(context: CallbackContext, chat_id: int, text: str, user_id: str = None):
-    """Generate and send voice with improved error handling"""
+    """Generate and send voice"""
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="record_voice")
         
@@ -577,19 +575,12 @@ async def send_voice_task(context: CallbackContext, chat_id: int, text: str, use
         voice = await asyncio.to_thread(generate_voice_sync, voice_text)
         
         if voice:
-            try:
-                await context.bot.send_voice(chat_id=chat_id, voice=voice)
-                logger.info("✅ Voice sent successfully")
-                if user_id:
-                    mark_voice_sent(user_id)
-            except Exception as send_error:
-                logger.warning(f"Failed to send voice message: {send_error}")
-        else:
-            logger.info("Voice generation returned None, skipping send")
-    except asyncio.CancelledError:
-        logger.info("Voice task cancelled")
+            await context.bot.send_voice(chat_id=chat_id, voice=voice)
+            logger.info("✅ Voice sent")
+            if user_id:
+                mark_voice_sent(user_id)
     except Exception as e:
-        logger.error(f"Error in send_voice_task: {e}", exc_info=False)
+        logger.error(f"Error in send_voice_task: {e}")
 
 
 # =====================================================
@@ -597,55 +588,34 @@ async def send_voice_task(context: CallbackContext, chat_id: int, text: str, use
 # =====================================================
 
 async def check_for_checkins(context: CallbackContext):
-    """Background job: Send 24-hour check-ins with proper error handling"""
-    logger.info("Running scheduled check-in job")
+    """Background job: Send 24-hour check-ins"""
+    logger.info("Running check-in job")
     
     try:
         all_users = supabase.table("users").select("id, telegram_id").execute()
-        if not all_users.data:
-            logger.info("No users found in database")
-            return
-        
-        success_count = 0
-        failed_count = 0
         
         for user in all_users.data:
-            try:
-                user_id = user.get("id")
-                telegram_id = user.get("telegram_id")
-                
-                if not user_id or not telegram_id:
-                    logger.warning(f"Skipping invalid user: {user}")
-                    continue
-                
-                if should_send_checkin(user_id):
-                    checkins = [
-                        "hey, what's up? 👀",
-                        "missing you, what're you up to?",
-                        "you there? 😊",
-                        "just thinking about you",
-                        "haven't heard from you, you good?",
-                    ]
-                    
-                    try:
-                        await context.bot.send_message(chat_id=telegram_id, text=random.choice(checkins))
-                        mark_checkin_sent(user_id)
-                        success_count += 1
-                        logger.info(f"Check-in sent to user {user_id}")
-                    except Exception as send_error:
-                        failed_count += 1
-                        logger.warning(f"Failed to send check-in to {telegram_id}: {send_error}")
-                        continue
+            user_id = user["id"]
+            telegram_id = user["telegram_id"]
             
-            except Exception as user_error:
-                failed_count += 1
-                logger.warning(f"Error processing user {user.get('id')}: {user_error}")
-                continue
-        
-        logger.info(f"Check-in job completed: {success_count} sent, {failed_count} failed")
+            if should_send_checkin(user_id):
+                checkins = [
+                    "hey, what's up? 👀",
+                    "missing you, what're you up to?",
+                    "you there? 😊",
+                    "just thinking about you",
+                    "haven't heard from you, you good?",
+                ]
+                
+                try:
+                    await context.bot.send_message(chat_id=telegram_id, text=random.choice(checkins))
+                    mark_checkin_sent(user_id)
+                    logger.info(f"Check-in sent to {user_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send check-in: {e}")
     
     except Exception as e:
-        logger.error(f"Critical error in check-in job: {e}", exc_info=False)
+        logger.error(f"Error in check-in job: {e}")
 
 def main():
     """Initialize and start the bot"""
