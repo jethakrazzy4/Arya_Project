@@ -93,6 +93,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # ===== PERSONALITY FILES =====
+# Maps personality choice to filename
+# Future: Add soul_male.txt and soul_nb.txt when ready
 PERSONALITY_FILES = {
     'female': 'soul_female.txt',
     'male': 'soul_male.txt',
@@ -321,22 +323,24 @@ def mark_checkin_sent(user_id: str) -> bool:
 # ===== PERSONALITY & PROMPTING =====
 def load_personality(gender: str = 'female') -> str:
     """
-    Load personality definition from file
-    Tries soul_female.txt first, then falls back to soul.txt (v105 compatibility)
+    Load personality definition from file based on gender preference
+    Currently soul_female.txt is the main file (renamed from soul.txt)
+    Falls back to soul_female.txt if other personality files don't exist yet
     """
     try:
-        # Try new filename first
+        # Get filename from dictionary, default to female
         filename = PERSONALITY_FILES.get(gender, 'soul_female.txt')
         filepath = os.path.join(SCRIPT_DIR, filename)
         
-        # If doesn't exist, try old soul.txt name (v105 compatibility)
+        # If file doesn't exist (e.g., soul_male.txt not created yet), use soul_female.txt
         if not os.path.exists(filepath):
-            filepath = os.path.join(SCRIPT_DIR, 'soul.txt')
+            logger.warning(f"Personality file {filename} not found, using soul_female.txt")
+            filepath = os.path.join(SCRIPT_DIR, 'soul_female.txt')
         
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
-        logger.error(f"Error loading personality: {e}")
+        logger.error(f"Error loading personality file: {e}")
         return "You are Arya, a 24-year-old woman with personality."
 
 def get_random_error(error_type: str = "general") -> str:
