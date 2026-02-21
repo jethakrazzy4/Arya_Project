@@ -811,8 +811,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     
-    # FIX #2: Changed interval from 7200 to 5400 seconds (1.5 hours instead of 2 hours)
-    app.job_queue.run_repeating(check_for_checkins, interval=5400, first=10)
+    # FIX #2: Changed interval from 5400 to 25200 seconds (7 hours instead of 1.5 hours)
+    app.job_queue.run_repeating(check_for_checkins, interval=25200, first=10)
     
     logger.info("✅ All handlers registered!")
     logger.info("💬 BOT IS RUNNING - READY FOR MESSAGES")
