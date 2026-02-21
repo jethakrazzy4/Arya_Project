@@ -629,7 +629,7 @@ def generate_voice_sync(text: str) -> Optional[BytesIO]:
 # =====================================================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming text messages"""
+    """Handle incoming text messages - FIXED to properly handle image requests"""
     user_id_telegram = update.effective_user.id
     chat_id = update.effective_chat.id
     user_message = update.message.text
@@ -657,17 +657,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         save_to_memory(user_id, "arya", arya_reply)
         
-        # Split into 2-3 messages if too long
-        messages = split_into_messages(arya_reply)
-        for msg in messages:
-            await update.message.reply_text(msg)
-            await asyncio.sleep(0.3)  # Small delay between messages
-        
-        # Generate image if response mentions sending one
+        # ✅ FIX: CHECK IF THIS IS AN IMAGE-ONLY RESPONSE FIRST
         should_generate = should_generate_image(arya_reply)
+        
         if should_generate and profile:
-            asyncio.create_task(send_image_task(context, chat_id, arya_reply))
+            # ===== IMAGE FLOW =====
+            # This is an image request - show waiting message, then generate photo
+            waiting_messages = [
+                "Wait, let me find that photo for you. 📸",
+                "Let me click the best one for you... ✨",
+                "Hold on, let me get a good shot... 📷",
+                "One sec, let me find the perfect photo... 💫",
+            ]
+            await update.message.reply_text(random.choice(waiting_messages))
+            
+            # Generate and send image in background
+            await send_image_task(context, chat_id, arya_reply)
             logger.info(f"Image generation triggered by keyword detection")
+        else:
+            # ===== TEXT FLOW =====
+            # Normal text response - send as usual
+            messages = split_into_messages(arya_reply)
+            for msg in messages:
+                await update.message.reply_text(msg)
+                await asyncio.sleep(0.3)  # Small delay between messages
     
     except Exception as e:
         logger.error(f"Error handling message: {e}")
