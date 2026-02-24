@@ -480,11 +480,25 @@ def split_into_messages(text: str, max_length: int = 1024) -> List[str]:
     return messages[:3]
 
 def generate_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
-    """Generate AI response"""
     try:
         logger.info(f"Generating response with {personality}")
         history = get_conversation_history(user_id, limit=10)
         soul_content = load_personality(personality)
+        
+        # ===== NEW: Inject user profile data =====
+        profile = get_user_profile(user_id)
+        if profile:
+            name = profile.get('user_name')
+            age = profile.get('user_age')
+            info_parts = []
+            if name:
+                info_parts.append(f"Name: {name}")
+            if age:
+                info_parts.append(f"Age: {age}")
+            if info_parts:
+                user_info = "User info: " + ", ".join(info_parts) + "\n\n"
+                soul_content = user_info + soul_content
+        # =========================================
         
         messages = [{"role": "system", "content": soul_content}]
         for msg in history:
