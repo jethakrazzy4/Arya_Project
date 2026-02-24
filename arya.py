@@ -176,6 +176,17 @@ logger.info("✅ All API clients initialized!")
 # SECTION 2: DATABASE FUNCTIONS
 # =====================================================
 
+# ===== POST-ONBOARDING QUESTIONS =====
+POST_ONBOARDING_QUESTIONS = [
+    {"field": "job", "question": "What do you do for work? 😊"},
+    {"field": "hobby1", "question": "Got any hobbies? Tell me one."},
+    {"field": "hobby2", "question": "Another hobby? I'm curious."},
+    {"field": "hobby3", "question": "And one more hobby? I love learning about you."},
+    {"field": "relationship_status", "question": "Are you in a relationship or single? (just curious)"},
+    {"field": "location", "question": "Where are you from?"},
+    {"field": "interests", "question": "What are you passionate about?"},
+]
+
 def get_or_create_user(telegram_id: int) -> Optional[str]:
     """Get existing user or create new one"""
     try:
@@ -287,6 +298,29 @@ def should_ask_onboarding_question(user_id: str) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"Error checking onboarding: {e}")
         return None
+    
+#Helpful function to determine if we should ask post-onboarding questions (job, hobbies, etc.) 
+def should_ask_post_onboarding_question(profile: Dict) -> bool:
+    """Return True if it's time to ask the next post‑onboarding question."""
+    if not profile.get("onboarding_complete"):
+        return False
+    
+    asked = profile.get("post_onboarding_questions_asked", 0)
+    if asked >= len(POST_ONBOARDING_QUESTIONS):
+        return False  # all questions already asked
+    
+    last_asked = profile.get("last_post_onboarding_question_at")
+    if not last_asked:
+        return True  # never asked any, ask now
+    
+    # Convert to datetime (handle timezone)
+    if isinstance(last_asked, str):
+        last_asked = datetime.fromisoformat(last_asked)
+    if last_asked.tzinfo is None:
+        last_asked = last_asked.replace(tzinfo=timezone.utc)
+    
+    # Wait at least 24 hours between questions
+    return (datetime.now(timezone.utc) - last_asked) > timedelta(hours=24)
 
 # ===== INPUT VALIDATION FUNCTIONS =====
 def clean_name(name_input: str) -> str:
@@ -343,12 +377,12 @@ def validate_and_convert_age(age_input: str) -> Optional[str]:
     # Check if it's already a number
     try:
         age_num = int(age_text)
-        # Validate reasonable age range (1-120)
-        if 1 <= age_num <= 120:
+        # Validate reasonable age range (18-100)
+        if 18 <= age_num <= 100:
             logger.info(f"Validated age: {age_num}")
             return str(age_num)
         else:
-            logger.warning(f"Age out of range: {age_num}")
+            logger.warning(f"You are not within the allowed age range: {age_num}")
             return None
     except ValueError:
         logger.warning(f"Invalid age input: '{age_input}'")
@@ -763,6 +797,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for msg in split_into_messages(arya_reply):
                 await update.message.reply_text(msg)
                 await asyncio.sleep(0.3)
+
+        # ===== POST-ONBOARDING HANDLING =====
+        # After sending the normal reply, handle any pending questions or ask new ones
+        if profile.get("onboarding_complete"):
+            # Check if we have a pending question
+            pending_field = profile.get("pending_question_field")
+            if pending_field:
+                answer = user_message.strip()
+                if answer:
+                    # Save answer to the corresponding column
+                    update_user_profile(user_id, {pending_field: answer})
+                    # Clear pending state
+                    update_user_profile(user_id, {
+                        "pending_question_field": None,
+                        "pending_question_asked_at": None
+                    })
+                    logger.info(f"Saved answer for {pending_field}: {answer[:50]}...")
+                    # Refresh profile after update (optional, but safe)
+                    profile = get_user_profile(user_id)
+            
+            # Now see if we should ask the next question (using possibly refreshed profile)
+            if should_ask_post_onboarding_question(profile):
+                asked = profile.get("post_onboarding_questions_asked", 0)
+                next_q = POST_ONBOARDING_QUESTIONS[asked]
+                # Send the question
+                await update.message.reply_text(next_q["question"])
+                # Update tracking: increment counter, set pending, record time
+                now_iso = datetime.now(timezone.utc).isoformat()
+                update_user_profile(user_id, {
+                    "post_onboarding_questions_asked": asked + 1,
+                    "last_post_onboarding_question_at": now_iso,
+                    "pending_question_field": next_q["field"],
+                    "pending_question_asked_at": now_iso
+                })
+                logger.info(f"Asked post‑onboarding question #{asked+1}: {next_q['field']}")
+        # =====================================
     
     except Exception as e:
         logger.error(f"Error: {e}")
