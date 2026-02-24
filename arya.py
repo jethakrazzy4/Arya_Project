@@ -288,6 +288,72 @@ def should_ask_onboarding_question(user_id: str) -> Optional[Dict]:
         logger.error(f"Error checking onboarding: {e}")
         return None
 
+# ===== INPUT VALIDATION FUNCTIONS =====
+def clean_name(name_input: str) -> str:
+    """Clean name input - remove prefixes and extra spaces"""
+    # Remove common prefixes like "It's", "My", "I'm", "The"
+    prefixes = ["it's ", "its ", "my ", "i'm ", "the ", "it is "]
+    
+    cleaned = name_input.strip()
+    for prefix in prefixes:
+        if cleaned.lower().startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+    
+    # Remove extra spaces
+    cleaned = ' '.join(cleaned.split())
+    
+    logger.info(f"Cleaned name: '{name_input}' → '{cleaned}'")
+    return cleaned
+
+def validate_and_convert_age(age_input: str) -> Optional[str]:
+    """Validate age input and convert text numbers to digits"""
+    age_text = age_input.strip().lower()
+    
+    # Word to number mapping
+    word_to_num = {
+        'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+        'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
+        'ten': '10', 'eleven': '11', 'twelve': '12', 'thirteen': '13',
+        'fourteen': '14', 'fifteen': '15', 'sixteen': '16', 'seventeen': '17',
+        'eighteen': '18', 'nineteen': '19', 'twenty': '20', 'thirty': '30',
+        'forty': '40', 'fifty': '50', 'sixty': '60', 'seventy': '70',
+        'eighty': '80', 'ninety': '90'
+    }
+    
+    # Handle hyphenated numbers like "twenty-one"
+    if '-' in age_text:
+        parts = age_text.split('-')
+        if len(parts) == 2:
+            tens = word_to_num.get(parts[0], None)
+            ones = word_to_num.get(parts[1], None)
+            if tens and ones:
+                try:
+                    num = int(tens) + int(ones)
+                    logger.info(f"Converted age: '{age_input}' → '{num}'")
+                    return str(num)
+                except:
+                    pass
+    
+    # Try to convert word to number
+    if age_text in word_to_num:
+        result = word_to_num[age_text]
+        logger.info(f"Converted age: '{age_input}' → '{result}'")
+        return result
+    
+    # Check if it's already a number
+    try:
+        age_num = int(age_text)
+        # Validate reasonable age range (1-120)
+        if 1 <= age_num <= 120:
+            logger.info(f"Validated age: {age_num}")
+            return str(age_num)
+        else:
+            logger.warning(f"Age out of range: {age_num}")
+            return None
+    except ValueError:
+        logger.warning(f"Invalid age input: '{age_input}'")
+        return None
+
 def can_send_voice_today(user_id: str) -> bool:
     """Check if user can send voice today"""
     try:
@@ -611,34 +677,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if onboarding_q:
         questions_asked = profile.get("questions_asked_today", 0)
-        logger.info(f"Answering question #{questions_asked + 1}")
+        logger.info(f"Onboarding Q#{questions_asked + 1}: {onboarding_q['field']}")
         
         if questions_asked == 0:
-            # Save name
-            logger.info(f"Saving name: {user_message}")
+            # ===== QUESTION 1: NAME =====
+            # Clean the name input
+            cleaned_name = clean_name(user_message)
+            
+            if not cleaned_name or len(cleaned_name) < 2:
+                await update.message.reply_text("hmm that doesn't look like a name 😅 try again?")
+                logger.warning(f"Invalid name input: '{user_message}'")
+                return
+            
+            logger.info(f"✅ Saving name: '{cleaned_name}'")
             update_user_profile(user_id, {
-                "user_name": user_message.strip(),
+                "user_name": cleaned_name,
                 "questions_asked_today": 1
             })
             await asyncio.sleep(0.3)
+            
+            # ASK NEXT QUESTION (Age)
+            next_q = ONBOARDING_QUESTIONS[1]
+            await update.message.reply_text(next_q["question"])
+            logger.info(f"Asked Q2: {next_q['question'][:50]}...")
+            return
         
         elif questions_asked == 1:
-            # Save age
-            logger.info(f"Saving age: {user_message}")
+            # ===== QUESTION 2: AGE =====
+            # Validate and convert age
+            validated_age = validate_and_convert_age(user_message)
+            
+            if not validated_age:
+                await update.message.reply_text("that doesn't look like a valid age 😅 please enter a number (like 25 or 'twenty-five')")
+                logger.warning(f"Invalid age input: '{user_message}'")
+                return
+            
+            logger.info(f"✅ Saving age: '{validated_age}'")
             update_user_profile(user_id, {
-                "user_age": user_message.strip(),
+                "user_age": validated_age,
                 "questions_asked_today": 2,
                 "onboarding_complete": True
             })
-            await update.message.reply_text("great! onboarding done 🎉")
-            logger.info(f"✅ Onboarding complete!")
+            
+            await update.message.reply_text(f"Nice to meet you! {profile.get('user_name', 'there')} 😊")
+            logger.info(f"✅ ONBOARDING COMPLETE!")
             await asyncio.sleep(0.5)
-            return
-        
-        # Ask next question
-        if questions_asked < len(ONBOARDING_QUESTIONS):
-            next_q = ONBOARDING_QUESTIONS[questions_asked]
-            await update.message.reply_text(next_q["question"])
             return
     
     # Normal conversation
