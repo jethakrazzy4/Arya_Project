@@ -5,3 +5,4 @@ gtts
 python-dotenv
 supabase
 replicate
+pytz==2024.1

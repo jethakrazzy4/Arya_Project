@@ -4,15 +4,18 @@ Premium AI Companion Service
 
 FEATURES:
 - /start command with personality selection (Arya/Alex/Aris)
-- Mandatory onboarding: Name, Age
+- Mandatory onboarding: Name, Age, Timezone
 - Full conversation history
 - Image and voice support
 - RLS-secured database
 - Production logging
+- TIME-AWARE responses (knows user's timezone)
+- DUAL-BRAIN system (DeepSeek for roleplay, Perplexity for intelligence)
 
 SCHEMA:
 - user_name: Collected during onboarding
 - user_age: Collected during onboarding  
+- user_timezone: Collected during onboarding (for time-aware messages)
 - personality_choice: Selected at /start
 - All data stored securely in Supabase
 """
@@ -28,6 +31,7 @@ import urllib.parse
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
+import pytz
 
 from gtts import gTTS
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -62,11 +66,18 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # ===== TELEGRAM =====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# ===== LLM (BRAIN) =====
+# ===== PRIMARY LLM (ROLEPLAY) =====
 BRAIN_PROVIDER = "openrouter"
 BRAIN_API_KEY = os.getenv("OPENROUTER_KEY")
 BRAIN_BASE_URL = "https://openrouter.ai/api/v1"
 BRAIN_MODEL = "deepseek/deepseek-v3.2"
+
+# ===== SECONDARY LLM (INTELLIGENCE/NEWS) - NEW =====
+INTELLIGENCE_PROVIDER = "openrouter"
+INTELLIGENCE_API_KEY = os.getenv("OPENROUTER_KEY")  # Same key as primary
+INTELLIGENCE_BASE_URL = "https://openrouter.ai/api/v1"
+INTELLIGENCE_MODEL = "perplexity/sonar-pro"  # Has web search + current knowledge
+INTELLIGENCE_ENABLED = True
 
 # ===== VOICE TRANSCRIPTION =====
 TRANSCRIPTION_PROVIDER = "groq"
@@ -109,6 +120,20 @@ PERSONALITIES_INFO = {
     'non-binary': {'name': 'Aris', 'gender': 'Non-binary'}
 }
 
+# ===== TIMEZONE VALIDATION =====
+VALID_TIMEZONES = pytz.all_timezones
+COMMON_TIMEZONES = {
+    'utc': 'UTC',
+    'est': 'America/New_York',
+    'cst': 'America/Chicago',
+    'mst': 'America/Denver',
+    'pst': 'America/Los_Angeles',
+    'gmt': 'Europe/London',
+    'ist': 'Asia/Kolkata',
+    'jst': 'Asia/Tokyo',
+    'aest': 'Australia/Sydney',
+}
+
 # ===== ERROR MESSAGES =====
 ERROR_MESSAGES = {
     "general": [
@@ -142,6 +167,15 @@ THINKING_PATTERNS = [
 ONBOARDING_QUESTIONS = [
     {"id": 1, "question": "what's your name btw? (first and last) 😊", "field": "user_name"},
     {"id": 2, "question": "and how old are you?", "field": "user_age"},
+    {"id": 3, "question": "what's your timezone? (e.g., America/New_York or Europe/London or Asia/Tokyo) 🌍", "field": "user_timezone"},
+]
+
+# ===== INTELLIGENCE QUESTION KEYWORDS =====
+INTELLIGENCE_KEYWORDS = [
+    "news", "current", "today", "this week", "this month", "market", "stock",
+    "price", "crypto", "bitcoin", "ethereum", "event", "happened", "breaking",
+    "latest", "recent", "update", "weather", "sports score", "game", "match",
+    "world", "politics", "election", "government", "what happened",
 ]
 
 # ===== VERIFY CONFIG =====
@@ -162,10 +196,12 @@ def verify_config():
             raise ValueError(f"Missing environment variable: {key_name}")
     
     logger.info("✅ All API keys verified!")
+    logger.info(f"✅ Dual-brain enabled: {BRAIN_MODEL} (roleplay) + {INTELLIGENCE_MODEL} (intelligence)")
 
 verify_config()
 
 brain_client = OpenAI(base_url=BRAIN_BASE_URL, api_key=BRAIN_API_KEY)
+intelligence_client = OpenAI(base_url=INTELLIGENCE_BASE_URL, api_key=INTELLIGENCE_API_KEY)
 transcription_client = OpenAI(base_url=TRANSCRIPTION_BASE_URL, api_key=TRANSCRIPTION_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -388,6 +424,31 @@ def validate_and_convert_age(age_input: str) -> Optional[str]:
         logger.warning(f"Invalid age input: '{age_input}'")
         return None
 
+def validate_timezone(tz_input: str) -> Optional[str]:
+    """Validate and normalize timezone input - NEW FUNCTION"""
+    tz_input = tz_input.strip()
+    
+    # Try to match common abbreviations first
+    if tz_input.lower() in COMMON_TIMEZONES:
+        result = COMMON_TIMEZONES[tz_input.lower()]
+        logger.info(f"Converted timezone: '{tz_input}' → '{result}'")
+        return result
+    
+    # Try exact match in pytz
+    if tz_input in VALID_TIMEZONES:
+        logger.info(f"Validated timezone: '{tz_input}'")
+        return tz_input
+    
+    # Try case-insensitive fuzzy match
+    tz_lower = tz_input.lower()
+    for valid_tz in VALID_TIMEZONES:
+        if valid_tz.lower() == tz_lower:
+            logger.info(f"Validated timezone (fuzzy): '{tz_input}' → '{valid_tz}'")
+            return valid_tz
+    
+    logger.warning(f"Invalid timezone: '{tz_input}'")
+    return None
+
 def can_send_voice_today(user_id: str) -> bool:
     """Check if user can send voice today"""
     try:
@@ -414,7 +475,7 @@ def mark_voice_sent(user_id: str) -> bool:
     return update_user_profile(user_id, {"last_voice_sent_at": datetime.now(timezone.utc).isoformat()})
 
 def should_send_checkin(user_id: str) -> bool:
-    """Check if 6+ hours since last check-in"""
+    """Check if 6+ hours since last check-in - FIXED TIMEZONE BUG"""
     try:
         profile = get_user_profile(user_id)
         if not profile:
@@ -424,8 +485,12 @@ def should_send_checkin(user_id: str) -> bool:
         if not last_checkin:
             return True
         
+        # FIXED: Use timezone-aware datetime
         last_checkin_time = datetime.fromisoformat(last_checkin)
-        time_diff = datetime.now() - last_checkin_time
+        if last_checkin_time.tzinfo is None:
+            last_checkin_time = last_checkin_time.replace(tzinfo=timezone.utc)
+        
+        time_diff = datetime.now(timezone.utc) - last_checkin_time
         return time_diff.total_seconds() > 21600
     except Exception as e:
         logger.error(f"Error checking checkin: {e}")
@@ -433,7 +498,34 @@ def should_send_checkin(user_id: str) -> bool:
 
 def mark_checkin_sent(user_id: str) -> bool:
     """Mark that check-in was sent"""
-    return update_user_profile(user_id, {"last_checkin_sent": datetime.now().isoformat()})
+    return update_user_profile(user_id, {"last_checkin_sent": datetime.now(timezone.utc).isoformat()})
+
+def get_user_local_time(user_id: str) -> Optional[datetime]:
+    """Get user's current local time based on their timezone - NEW FUNCTION"""
+    try:
+        profile = get_user_profile(user_id)
+        if not profile or not profile.get("user_timezone"):
+            return datetime.now(timezone.utc)  # Fallback to UTC
+        
+        tz_str = profile.get("user_timezone")
+        try:
+            user_tz = pytz.timezone(tz_str)
+            return datetime.now(user_tz)
+        except:
+            logger.warning(f"Invalid timezone in profile: {tz_str}")
+            return datetime.now(timezone.utc)
+    except Exception as e:
+        logger.error(f"Error getting user local time: {e}")
+        return datetime.now(timezone.utc)
+
+def is_intelligence_question(text: str) -> bool:
+    """Detect if question is about intelligence/news/current affairs - NEW FUNCTION"""
+    text_lower = text.lower()
+    for keyword in INTELLIGENCE_KEYWORDS:
+        if keyword in text_lower:
+            logger.info(f"Detected intelligence question (keyword: '{keyword}')")
+            return True
+    return False
 
 
 # =====================================================
@@ -513,13 +605,72 @@ def split_into_messages(text: str, max_length: int = 1024) -> List[str]:
         messages.append(current.strip())
     return messages[:3]
 
-def generate_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
+def build_system_prompt_with_time(personality_content: str, user_id: str) -> str:
+    """Build system prompt with current time context - NEW FUNCTION"""
     try:
-        logger.info(f"Generating response with {personality}")
+        profile = get_user_profile(user_id)
+        
+        # Get user's local time
+        user_local_time = get_user_local_time(user_id)
+        day_name = user_local_time.strftime("%A")
+        time_str = user_local_time.strftime("%I:%M %p")
+        date_str = user_local_time.strftime("%B %d, %Y")
+        hour = user_local_time.hour
+        
+        # Determine time of day
+        if hour < 12:
+            time_of_day = "morning"
+        elif hour < 17:
+            time_of_day = "afternoon"
+        elif hour < 21:
+            time_of_day = "evening"
+        else:
+            time_of_day = "night"
+        
+        # Build time context
+        time_context = f"""
+CURRENT DATE & TIME (User's Local Time):
+- Date: {date_str} ({day_name})
+- Time: {time_str}
+- Time of Day: {time_of_day}
+
+USE THIS CONTEXT to make your responses timely and relevant.
+For example, if it's morning, you might say "good morning" naturally.
+If it's late at night, you might notice they're up late.
+Always be aware of what time it is for them right now.
+"""
+        
+        return personality_content + time_context
+    except Exception as e:
+        logger.error(f"Error building system prompt: {e}")
+        return personality_content
+
+def generate_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
+    """Generate response using appropriate LLM based on question type - MODIFIED"""
+    try:
+        # Check if this is an intelligence question
+        use_intelligence_brain = is_intelligence_question(user_message) and INTELLIGENCE_ENABLED
+        
+        if use_intelligence_brain:
+            logger.info(f"Using INTELLIGENCE brain for: {user_message[:50]}...")
+            return generate_intelligence_response(user_id, user_message)
+        else:
+            logger.info(f"Using ROLEPLAY brain ({personality}) for: {user_message[:50]}...")
+            return generate_roleplay_response(user_id, user_message, personality)
+    except Exception as e:
+        logger.error(f"Error in generate_response: {e}")
+        return None
+
+def generate_roleplay_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
+    """Generate roleplay response using DeepSeek - EXTRACTED FUNCTION"""
+    try:
         history = get_conversation_history(user_id, limit=10)
         soul_content = load_personality(personality)
         
-        # ===== NEW: Inject user profile data =====
+        # Add time context to system prompt
+        system_prompt = build_system_prompt_with_time(soul_content, user_id)
+        
+        # ===== Inject user profile data =====
         profile = get_user_profile(user_id)
         if profile:
             name = profile.get('user_name')
@@ -531,10 +682,9 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
                 info_parts.append(f"Age: {age}")
             if info_parts:
                 user_info = "User info: " + ", ".join(info_parts) + "\n\n"
-                soul_content = user_info + soul_content
-        # =========================================
+                system_prompt = user_info + system_prompt
         
-        messages = [{"role": "system", "content": soul_content}]
+        messages = [{"role": "system", "content": system_prompt}]
         for msg in history:
             role = "user" if msg["sender"] == "user" else "assistant"
             messages.append({"role": role, "content": msg["message"]})
@@ -550,7 +700,42 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
         reply = response.choices[0].message.content.strip()
         return clean_response(reply)
     except Exception as e:
-        logger.error(f"Error generating response: {e}")
+        logger.error(f"Error in generate_roleplay_response: {e}")
+        return None
+
+def generate_intelligence_response(user_id: str, user_message: str) -> Optional[str]:
+    """Generate intelligence/news response using Perplexity - NEW FUNCTION"""
+    try:
+        history = get_conversation_history(user_id, limit=5)
+        
+        # Build system prompt for intelligence
+        system_prompt = f"""You are a knowledgeable and helpful AI assistant. The current date is {datetime.now(timezone.utc).strftime('%B %d, %Y')}.
+
+You have access to current information and news. Answer questions accurately and provide recent information when asked about current events, news, prices, weather, or any time-sensitive topics.
+
+Be conversational and friendly, but factual and reliable. If you're not sure about something, say so.
+Respond in a natural, human-like way."""
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history
+        for msg in history:
+            role = "user" if msg["sender"] == "user" else "assistant"
+            messages.append({"role": role, "content": msg["message"]})
+        
+        messages.append({"role": "user", "content": user_message})
+        
+        response = intelligence_client.chat.completions.create(
+            model=INTELLIGENCE_MODEL,
+            messages=messages,
+            max_tokens=800,
+            temperature=0.7,
+        )
+        
+        reply = response.choices[0].message.content.strip()
+        return reply
+    except Exception as e:
+        logger.error(f"Error in generate_intelligence_response: {e}")
         return None
 
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
@@ -756,18 +941,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             validated_age = validate_and_convert_age(user_message)
             
             if not validated_age:
-                await update.message.reply_text("that doesn't look like a valid age 😅 please enter a number (like 25 or 'twenty-five')")
+                await update.message.reply_text("that doesn't look like a valid age 😅 please tell me a number (like 25 or 'twenty-five')")
                 logger.warning(f"Invalid age input: '{user_message}'")
                 return
             
             logger.info(f"✅ Saving age: '{validated_age}'")
             update_user_profile(user_id, {
                 "user_age": validated_age,
-                "questions_asked_today": 2,
+                "questions_asked_today": 2
+            })
+            
+            await asyncio.sleep(0.3)
+            
+            # ASK NEXT QUESTION (Timezone) - NEW
+            next_q = ONBOARDING_QUESTIONS[2]
+            await update.message.reply_text(next_q["question"])
+            logger.info(f"Asked Q3: {next_q['question'][:50]}...")
+            return
+        
+        elif questions_asked == 2:
+            # ===== QUESTION 3: TIMEZONE - NEW =====
+            # Validate timezone
+            validated_tz = validate_timezone(user_message)
+            
+            if not validated_tz:
+                await update.message.reply_text("i'm not sure that's a valid timezone 😅 try 'America/New_York', 'Europe/London', 'Asia/Tokyo', etc")
+                logger.warning(f"Invalid timezone input: '{user_message}'")
+                return
+            
+            logger.info(f"✅ Saving timezone: '{validated_tz}'")
+            update_user_profile(user_id, {
+                "user_timezone": validated_tz,
+                "questions_asked_today": 3,
                 "onboarding_complete": True
             })
             
-            await update.message.reply_text(f"Nice to meet you! {profile.get('user_name', 'there')} 😊")
+            await update.message.reply_text(f"Nice to meet you, {profile.get('user_name', 'there')}! 😊 Now we can chat whenever, and I'll know what time it is for you 🌍")
             logger.info(f"✅ ONBOARDING COMPLETE!")
             await asyncio.sleep(0.5)
             return
@@ -952,14 +1161,16 @@ def main():
     logger.info("="*70)
     logger.info("🚀 ARYA 4.0 - FINAL PRODUCTION VERSION")
     logger.info("="*70)
-    logger.info(f"Brain: {BRAIN_MODEL}")
+    logger.info(f"Primary Brain (Roleplay): {BRAIN_MODEL}")
+    logger.info(f"Secondary Brain (Intelligence): {INTELLIGENCE_MODEL}")
     logger.info(f"Voice In: {TRANSCRIPTION_PROVIDER}")
     logger.info(f"Voice Out: {TTS_PROVIDER}")
     logger.info(f"Images: {IMAGE_PROVIDER}")
     logger.info("="*70)
     logger.info("Personalities: Arya (Female), Alex (Male), Aris (Non-binary)")
-    logger.info("Mandatory Data: Name, Age")
-    logger.info("Security: RLS Enabled, Data Private")
+    logger.info("Mandatory Data: Name, Age, Timezone")
+    logger.info("Features: TIME-AWARE messages, DUAL-BRAIN intelligence system")
+    logger.info("Security: RLS Enabled, Data Private, Timezone-aware")
     logger.info("="*70)
     
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -974,7 +1185,9 @@ def main():
     logger.info("✅ All handlers registered!")
     logger.info("✅ /start command ready")
     logger.info("✅ Personality selection ready")
-    logger.info("✅ Data collection ready (Name, Age)")
+    logger.info("✅ Data collection ready (Name, Age, Timezone)")
+    logger.info("✅ Time-aware responses enabled")
+    logger.info("✅ Dual-brain intelligence routing enabled")
     logger.info("✅ RLS enabled (secure)")
     logger.info("💬 BOT IS RUNNING")
     logger.info("="*70)
