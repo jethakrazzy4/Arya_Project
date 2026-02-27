@@ -135,13 +135,28 @@ COMMON_TIMEZONES = {
 }
 
 # ===== INTELLIGENCE QUESTION KEYWORDS =====
+# These keywords trigger SMALL BRAIN (Perplexity Sonar)
+# Includes news, current events, and social media trending topics
 INTELLIGENCE_KEYWORDS = [
+    # === NEWS & CURRENT EVENTS ===
     "news", "today", "current", "this week", "this month", "happening",
     "just happened", "breaking", "latest", "recent", "what happened",
     "did you hear", "have you heard", "found out", "discovered",
     "announced", "revealed", "weather", "good news", "bad news",
     "something good", "covid", "pandemic", "vaccine", "breakthrough",
     "covid news", "virus", "market today", "stock market", "bitcoin price",
+    "trending", "viral", "headlines", "reported", "according to",
+    
+    # === SOCIAL MEDIA TRENDS (Instagram, X/Twitter, TikTok, Reddit) ===
+    "instagram", "insta", "tiktok", "twitter", "x", "reddit", "trending",
+    "viral", "going viral", "meme", "trend", "challenge", "hashtag", "#",
+    "retweet", "retweeted", "shared", "posted", "posted on",
+    "what's trending", "whats trending", "top post",
+    "on social media", "twitter is saying", "people are talking",
+    "everyone's talking", "all over instagram", "all over tiktok",
+    "all over twitter", "all over reddit", "went viral", "blew up",
+    "influencer", "influencers", "celebrity news", "celebrity gossip",
+    "what happened on", "did you see on", "saw on", "found on",
 ]
 
 # ===== ERROR MESSAGES =====
@@ -510,11 +525,17 @@ def get_user_local_time(user_id: str) -> Optional[datetime]:
         return datetime.now(timezone.utc)
 
 def is_intelligence_question(text: str) -> bool:
-    """Detect if question is about current news/events"""
+    """
+    Detect if question is about current news/events/trends/social media
+    
+    LEGACY FUNCTION: Maintained for backward compatibility.
+    Combines both news detection and social media trend detection.
+    Uses the expanded INTELLIGENCE_KEYWORDS list (now includes social media).
+    """
     text_lower = text.lower()
     for keyword in INTELLIGENCE_KEYWORDS:
         if keyword in text_lower:
-            logger.info(f"🧠 Detected NEWS question (keyword: '{keyword}')")
+            logger.info(f"🧠 Detected question matching INTELLIGENCE_KEYWORDS (keyword: '{keyword}')")
             return True
     return False
 
@@ -522,6 +543,40 @@ def is_intelligence_question(text: str) -> bool:
 # =====================================================
 # SECTION 3: CORE LOGIC (LLM, IMAGES, VOICE)
 # =====================================================
+# REFACTORED FOR DUAL-BRAIN SEPARATION WITH IMAGE ANALYSIS
+# Uses: brain_client (DeepSeek) and intelligence_client (Perplexity) from SECTION 1
+
+# ===== HELPER FUNCTIONS FOR BRAIN ROUTING =====
+
+def is_social_media_question(text: str) -> bool:
+    """Detect if question is about social media trends/viral content"""
+    text_lower = text.lower()
+    social_keywords = [
+        "instagram", "insta", "tiktok", "twitter", "x", "reddit", "trending",
+        "viral", "going viral", "meme", "challenge", "hashtag",
+        "whats trending", "what's trending", "top post", "on social media",
+        "went viral", "blew up", "influencer", "celebrity news",
+        "did you see on", "saw on", "all over"
+    ]
+    
+    for keyword in social_keywords:
+        if keyword in text_lower:
+            logger.info(f"📱 Detected SOCIAL MEDIA question (keyword: '{keyword}')")
+            return True
+    return False
+
+
+def is_news_or_current_question(text: str) -> bool:
+    """Detect if question is about current news/events (checks INTELLIGENCE_KEYWORDS)"""
+    text_lower = text.lower()
+    for keyword in INTELLIGENCE_KEYWORDS:
+        if keyword in text_lower:
+            logger.info(f"📰 Detected NEWS/CURRENT question (keyword: '{keyword}')")
+            return True
+    return False
+
+
+# ===== LOAD & UTILITY FUNCTIONS =====
 
 def load_personality(personality_choice: str = 'female') -> str:
     """Load personality definition from file"""
@@ -640,25 +695,21 @@ def build_system_prompt_with_time(personality_content: str, user_id: str) -> str
         logger.error(f"Error building system prompt: {e}")
         return personality_content
 
-def generate_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
-    """Generate response using appropriate LLM based on question type"""
-    try:
-        # Check if this is a news/current events question
-        use_intelligence_brain = is_intelligence_question(user_message) and INTELLIGENCE_ENABLED
-        
-        if use_intelligence_brain:
-            logger.info(f"🧠 Using NEWS/PERPLEXITY brain for: {user_message[:50]}...")
-            return generate_intelligence_response(user_id, user_message)
-        else:
-            logger.info(f"💬 Using PERSONALITY/DEEPSEEK brain ({personality}) for: {user_message[:50]}...")
-            return generate_roleplay_response(user_id, user_message, personality)
-    except Exception as e:
-        logger.error(f"Error in generate_response: {e}")
-        return None
 
-def generate_roleplay_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
-    """Generate roleplay response using DeepSeek"""
+# ===== BIG BRAIN MANAGER (DeepSeek - Personality/Roleplay) =====
+
+def big_brain_manager(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
+    """
+    BIG BRAIN MANAGER - Uses DeepSeek for Roleplay/Personality
+    
+    Purpose: Generate personality-driven responses for casual conversation
+    Model: DeepSeek-v3.2 (via OpenRouter - configured in SECTION 1)
+    When triggered: All messages except news/trends/social media
+    
+    Returns: Personality-driven response
+    """
     try:
+        # Using brain_client initialized in SECTION 1 (line 205)
         history = get_conversation_history(user_id, limit=10)
         soul_content = load_personality(personality)
         
@@ -685,6 +736,7 @@ def generate_roleplay_response(user_id: str, user_message: str, personality: str
             messages.append({"role": role, "content": msg["message"]})
         messages.append({"role": "user", "content": user_message})
         
+        # Use brain_client from SECTION 1
         response = brain_client.chat.completions.create(
             model=BRAIN_MODEL,
             messages=messages,
@@ -693,14 +745,91 @@ def generate_roleplay_response(user_id: str, user_message: str, personality: str
         )
         
         reply = response.choices[0].message.content.strip()
+        logger.info(f"💬 BIG BRAIN (DeepSeek) generated response for {personality}")
         return clean_response(reply)
     except Exception as e:
-        logger.error(f"Error in generate_roleplay_response: {e}")
+        logger.error(f"Error in big_brain_manager: {e}")
         return None
 
-def generate_intelligence_response(user_id: str, user_message: str) -> Optional[str]:
-    """Generate intelligence/news response using Perplexity - BUT FORMAT LIKE ARYA"""
+
+# ===== SMALL BRAIN MANAGER (Perplexity Sonar - News/Trends/Intelligence) =====
+
+def analyze_image_content(image_data: bytes, personality: str = 'female') -> Optional[str]:
+    """
+    SMALL BRAIN IMAGE ANALYSIS
+    
+    Purpose: Analyze image content and describe what's in it
+    Model: Perplexity Sonar (via OpenRouter - configured in SECTION 1)
+    Returns: Brief description of image content for context
+    """
     try:
+        import base64
+        
+        # Using intelligence_client initialized in SECTION 1 (line 206)
+        # Convert image to base64
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Build minimal system prompt for image analysis
+        analysis_prompt = f"""You are analyzing an image. Respond VERY BRIEFLY (1 sentence, max 15 words).
+Describe only: objects, people, mood, action, or main scene.
+Example: "Image shows: sunset beach with couple walking"
+
+Current date is February 27, 2026."""
+        
+        messages = [
+            {"role": "system", "content": analysis_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_base64
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": "What's in this image? Describe briefly."
+                    }
+                ]
+            }
+        ]
+        
+        # Use intelligence_client from SECTION 1
+        response = intelligence_client.chat.completions.create(
+            model=INTELLIGENCE_MODEL,
+            messages=messages,
+            max_tokens=50,  # Very short response
+            temperature=0.7,
+        )
+        
+        analysis = response.choices[0].message.content.strip()
+        logger.info(f"🖼️ SMALL BRAIN analyzed image: {analysis}")
+        return analysis
+    except Exception as e:
+        logger.error(f"Error analyzing image: {e}")
+        return None
+
+
+def small_brain_manager(user_id: str, user_message: str, context: Optional[str] = None) -> Optional[str]:
+    """
+    SMALL BRAIN MANAGER - Uses Perplexity Sonar for News/Trends/Current Info
+    
+    Purpose: Provide current knowledge about news, trends, and real-time information
+    Model: Perplexity Sonar (via OpenRouter - configured in SECTION 1, has web search)
+    When triggered: News questions, trending topics, social media questions
+    
+    Args:
+        user_id: User ID
+        user_message: User's message text
+        context: Optional context (e.g., from image analysis)
+    
+    Returns: Knowledge-based response formatted casually (like personality)
+    """
+    try:
+        # Using intelligence_client initialized in SECTION 1 (line 206)
         history = get_conversation_history(user_id, limit=5)
         
         # Get user's profile for personalization
@@ -718,11 +847,12 @@ CRITICAL RULES:
 - Use lowercase naturally
 - Use emojis sparingly (1-2 per message)
 - Sound like a real person, not Wikipedia
-- If user asks about news/current events, share what's happening TODAY in a casual way
+- If user asks about news/current events/trends, share what's happening TODAY in a casual way
 
 Examples of GOOD responses:
 - "oh yeah something about that happening today fr 📰"
 - "idk exactly but i heard something wild about it"
+- "that went viral on tiktok last week lol"
 - "scientists found something cool recently i think? 🤔"
 
 Examples of BAD responses:
@@ -730,7 +860,11 @@ Examples of BAD responses:
 - "Let me provide detailed analysis..."
 - Multiple paragraphs of formal text
 
-Current date is February 25, 2026. Find current information and respond naturally."""
+Current date is February 27, 2026. Find current information and respond naturally."""
+        
+        # If we have image context, include it
+        if context:
+            system_prompt += f"\n\nImage context: {context}"
         
         messages = [{"role": "system", "content": system_prompt}]
         
@@ -741,6 +875,7 @@ Current date is February 25, 2026. Find current information and respond naturall
         
         messages.append({"role": "user", "content": user_message})
         
+        # Use intelligence_client from SECTION 1
         response = intelligence_client.chat.completions.create(
             model=INTELLIGENCE_MODEL,
             messages=messages,
@@ -750,11 +885,87 @@ Current date is February 25, 2026. Find current information and respond naturall
         
         reply = response.choices[0].message.content.strip()
         cleaned = clean_response(reply)
-        logger.info(f"✅ Perplexity response (cleaned): {cleaned[:100]}...")
+        logger.info(f"🧠 SMALL BRAIN (Perplexity) generated response")
         return cleaned
     except Exception as e:
-        logger.error(f"Error in generate_intelligence_response: {e}")
+        logger.error(f"Error in small_brain_manager: {e}")
         return None
+
+
+# ===== MASTER BRAIN ROUTER =====
+
+def generate_response(user_id: str, user_message: str, personality: str = 'female', image_data: Optional[bytes] = None) -> Optional[str]:
+    """
+    MASTER ROUTER - Decides which brain to use
+    
+    ROUTING LOGIC:
+    1. If image attached → SMALL BRAIN analyzes it → BIG BRAIN replies with image context
+    2. If news/trend/social media keywords detected → SMALL BRAIN (with web search)
+    3. Otherwise → BIG BRAIN (personality/roleplay)
+    
+    Args:
+        user_id: User ID
+        user_message: User's message text
+        personality: Selected personality (female/male/non-binary)
+        image_data: Optional image bytes for analysis
+    
+    Returns: Final response from appropriate brain
+    """
+    try:
+        # === IMAGE HANDLING: SMALL BRAIN analyzes, then BIG BRAIN replies with context ===
+        if image_data:
+            logger.info("📸 IMAGE DETECTED - Small Brain analyzing...")
+            image_context = analyze_image_content(image_data, personality)
+            
+            if image_context:
+                logger.info(f"📸 Image analyzed: {image_context}")
+                # Now use BIG BRAIN to create personality response with image context
+                full_message = f"{user_message} [shared image: {image_context}]"
+                return big_brain_manager(user_id, full_message, personality)
+            else:
+                # Image analysis failed, fallback to BIG BRAIN
+                logger.warning("📸 Image analysis failed, using Big Brain without image context")
+                return big_brain_manager(user_id, user_message, personality)
+        
+        # === TEXT ROUTING: Check if news/trends/social media question ===
+        use_small_brain = (
+            (is_news_or_current_question(user_message) or is_social_media_question(user_message)) 
+            and INTELLIGENCE_ENABLED
+        )
+        
+        if use_small_brain:
+            logger.info(f"📰 NEWS/TRENDS/SOCIAL MEDIA DETECTED - Using Small Brain (Perplexity)")
+            return small_brain_manager(user_id, user_message)
+        
+        # === DEFAULT: Use BIG BRAIN for personality-driven responses ===
+        logger.info(f"💬 NORMAL CONVERSATION - Using Big Brain (DeepSeek)")
+        return big_brain_manager(user_id, user_message, personality)
+    
+    except Exception as e:
+        logger.error(f"Error in generate_response: {e}")
+        return None
+
+
+# ===== LEGACY FUNCTION ALIASES (For backward compatibility with existing code) =====
+
+def generate_roleplay_response(user_id: str, user_message: str, personality: str = 'female') -> Optional[str]:
+    """
+    LEGACY ALIAS: Use big_brain_manager() for new code
+    
+    Kept for backward compatibility - existing code calls this function
+    Now delegates to big_brain_manager()
+    """
+    return big_brain_manager(user_id, user_message, personality)
+
+
+def generate_intelligence_response(user_id: str, user_message: str) -> Optional[str]:
+    """
+    LEGACY ALIAS: Use small_brain_manager() for new code
+    
+    Kept for backward compatibility - existing code calls this function
+    Now delegates to small_brain_manager()
+    """
+    return small_brain_manager(user_id, user_message)
 
 def generate_image_sync(prompt: str) -> Optional[BytesIO]:
     """Generate image using Eternal AI"""
