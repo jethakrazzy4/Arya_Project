@@ -1,5 +1,5 @@
 """
-ARYA 4.0 - FINAL PRODUCTION VERSION (v4.2 - DUAL-BRAIN FIXED)
+ARYA 4.0 - FINAL PRODUCTION VERSION (v4.3 - SPINAL CORD IMAGE VISION)
 Premium AI Companion Service
 
 FEATURES:
@@ -11,6 +11,7 @@ FEATURES:
 - Production logging
 - TIME-AWARE responses (knows user's timezone)
 - SMART DUAL-BRAIN (DeepSeek for personality, Perplexity for current news)
+- SPINAL CORD (Claude 3.5 Sonnet for detailed image analysis)
 
 SCHEMA:
 - user_name: Collected during onboarding
@@ -78,6 +79,12 @@ INTELLIGENCE_API_KEY = os.getenv("OPENROUTER_KEY")  # Same key!
 INTELLIGENCE_BASE_URL = "https://openrouter.ai/api/v1"
 INTELLIGENCE_MODEL = "perplexity/sonar"  # Has web search + current knowledge
 INTELLIGENCE_ENABLED = True
+
+# ===== SPINAL CORD (IMAGE READING/VISION) =====
+SPINAL_CORD_PROVIDER = "openrouter"
+SPINAL_CORD_API_KEY = os.getenv("OPENROUTER_KEY")  # Same key!
+SPINAL_CORD_BASE_URL = "https://openrouter.ai/api/v1"
+SPINAL_CORD_MODEL = "anthropic/claude-3.5-sonnet-20241022"  # Excellent vision capability
 
 # ===== VOICE TRANSCRIPTION =====
 TRANSCRIPTION_PROVIDER = "groq"
@@ -214,11 +221,13 @@ def verify_config():
     
     logger.info("✅ All API keys verified!")
     logger.info(f"✅ Dual-brain enabled: {BRAIN_MODEL} (personality) + {INTELLIGENCE_MODEL} (current news)")
+    logger.info(f"✅ Spinal cord enabled: {SPINAL_CORD_MODEL} (image vision)")
 
 verify_config()
 
 brain_client = OpenAI(base_url=BRAIN_BASE_URL, api_key=BRAIN_API_KEY)
 intelligence_client = OpenAI(base_url=INTELLIGENCE_BASE_URL, api_key=INTELLIGENCE_API_KEY)
+spinal_cord_client = OpenAI(base_url=SPINAL_CORD_BASE_URL, api_key=SPINAL_CORD_API_KEY)
 transcription_client = OpenAI(base_url=TRANSCRIPTION_BASE_URL, api_key=TRANSCRIPTION_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -756,25 +765,37 @@ def big_brain_manager(user_id: str, user_message: str, personality: str = 'femal
 
 def analyze_image_content(image_data: bytes, personality: str = 'female') -> Optional[str]:
     """
-    SMALL BRAIN IMAGE ANALYSIS
+    SPINAL CORD - IMAGE VISION ANALYSIS
     
-    Purpose: Analyze image content and describe what's in it
-    Model: Perplexity Sonar (via OpenRouter - configured in SECTION 1)
-    Returns: Brief description of image content for context
+    Purpose: Analyze image content in DETAILED manner
+    Model: Claude 3.5 Sonnet (via OpenRouter - excellent vision capability)
+    Usage: Claude analyzes image → Returns detailed description → Big Brain uses for response
+    
+    Returns: Detailed text description of image content (NOT for user, for Big Brain)
     """
     try:
         import base64
         
-        # Using intelligence_client initialized in SECTION 1 (line 206)
+        # Using spinal_cord_client initialized in SECTION 1
         # Convert image to base64
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         
-        # Build minimal system prompt for image analysis
-        analysis_prompt = f"""You are analyzing an image. Respond VERY BRIEFLY (1 sentence, max 15 words).
-Describe only: objects, people, mood, action, or main scene.
-Example: "Image shows: sunset beach with couple walking"
+        # Detailed analysis prompt - Claude should provide comprehensive description
+        analysis_prompt = """You are analyzing an image to provide detailed context for a conversational AI.
+Analyze the image thoroughly and provide a DETAILED description.
 
-Current date is February 27, 2026."""
+Include in your analysis:
+- All objects, people, and entities visible
+- Colors, lighting, and atmosphere
+- Composition and framing
+- Actions or interactions happening
+- Mood and emotions conveyed
+- Setting/location/background
+- Any text visible in image
+- Notable details and context
+
+Provide your analysis as a continuous paragraph, detailed and thorough.
+This analysis will be used by the AI to respond to the user about the image."""
         
         messages = [
             {"role": "system", "content": analysis_prompt},
@@ -791,25 +812,25 @@ Current date is February 27, 2026."""
                     },
                     {
                         "type": "text",
-                        "text": "What's in this image? Describe briefly."
+                        "text": "Please analyze this image in detail."
                     }
                 ]
             }
         ]
         
-        # Use intelligence_client from SECTION 1
-        response = intelligence_client.chat.completions.create(
-            model=INTELLIGENCE_MODEL,
+        # Use spinal_cord_client from SECTION 1 (Claude 3.5 Sonnet)
+        response = spinal_cord_client.chat.completions.create(
+            model=SPINAL_CORD_MODEL,
             messages=messages,
-            max_tokens=50,  # Very short response
+            max_tokens=500,  # Detailed response - generous limit
             temperature=0.7,
         )
         
         analysis = response.choices[0].message.content.strip()
-        logger.info(f"🖼️ SMALL BRAIN analyzed image: {analysis}")
+        logger.info(f"🧬 SPINAL CORD analyzed image (detailed): {len(analysis)} chars")
         return analysis
     except Exception as e:
-        logger.error(f"Error analyzing image: {e}")
+        logger.error(f"Error in SPINAL CORD image analysis: {e}")
         return None
 
 
@@ -912,19 +933,19 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
     Returns: Final response from appropriate brain
     """
     try:
-        # === IMAGE HANDLING: SMALL BRAIN analyzes, then BIG BRAIN replies with context ===
+        # === IMAGE HANDLING: SPINAL CORD analyzes, then BIG BRAIN replies with context ===
         if image_data:
-            logger.info("📸 IMAGE DETECTED - Small Brain analyzing...")
+            logger.info("📸 IMAGE DETECTED - Spinal Cord analyzing...")
             image_context = analyze_image_content(image_data, personality)
             
             if image_context:
-                logger.info(f"📸 Image analyzed: {image_context}")
+                logger.info(f"🧬 Spinal Cord analysis complete - passing to Big Brain")
                 # Now use BIG BRAIN to create personality response with image context
                 full_message = f"{user_message} [shared image: {image_context}]"
                 return big_brain_manager(user_id, full_message, personality)
             else:
                 # Image analysis failed, fallback to BIG BRAIN
-                logger.warning("📸 Image analysis failed, using Big Brain without image context")
+                logger.warning("📸 Spinal Cord image analysis failed, using Big Brain without image context")
                 return big_brain_manager(user_id, user_message, personality)
         
         # === TEXT ROUTING: Check if news/trends/social media question ===
@@ -1458,7 +1479,7 @@ def main():
     logger.info("✅ Data collection ready (Name, Age, Timezone)")
     logger.info("✅ Time-aware responses enabled")
     logger.info("✅ Dual-brain intelligent routing enabled")
-    logger.info("✅ Image handler ready - Small Brain analyzes images, Big Brain responds with context")
+    logger.info("✅ Spinal Cord image handler ready - Claude 3.5 analyzes images for Big Brain")
     logger.info("✅ News questions use Sonar Pro (Perplexity) with web search")
     logger.info("✅ RLS enabled (secure)")
     logger.info("💬 BOT IS RUNNING")
