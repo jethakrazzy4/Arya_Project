@@ -1310,6 +1310,59 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error: {e}")
         await update.message.reply_text(get_random_error("voice"))
 
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle image messages - Small Brain analyzes image, Big Brain responds with context"""
+    user_id_telegram = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    user_id = get_or_create_user(user_id_telegram)
+    if not user_id:
+        await update.message.reply_text(get_random_error("general"))
+        return
+    
+    profile = get_user_profile(user_id)
+    if not profile or not profile.get("personality_choice"):
+        await update.message.reply_text("use /start to pick a personality first! 😊")
+        return
+    
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        # Get the photo (highest quality is last in the list)
+        photo = update.message.photo[-1]
+        photo_file = await context.bot.get_file(photo.file_id)
+        photo_bytes = await photo_file.download_as_bytearray()
+        
+        # Get caption if user added one
+        user_message = update.message.caption if update.message.caption else "what do you think about this photo?"
+        
+        logger.info(f"🖼️ IMAGE RECEIVED from {user_id_telegram}: {len(photo_bytes)} bytes")
+        
+        # Save the message (with indication it has an image)
+        save_to_memory(user_id, "user", f"[shared image] {user_message}")
+        update_user_profile(user_id, {"last_message_from_user": datetime.now(timezone.utc).isoformat()})
+        
+        personality = profile.get("personality_choice", "female")
+        
+        # Pass image_data to generate_response so Small Brain analyzes it
+        # Small Brain will analyze image and give detailed description to Big Brain
+        arya_reply = generate_response(user_id, user_message, personality, image_data=bytes(photo_bytes))
+        
+        if not arya_reply:
+            await update.message.reply_text(get_random_error("general"))
+            return
+        
+        save_to_memory(user_id, "arya", arya_reply)
+        
+        # Send reply
+        for msg in split_into_messages(arya_reply):
+            await update.message.reply_text(msg)
+            await asyncio.sleep(0.3)
+    
+    except Exception as e:
+        logger.error(f"Error handling image: {e}")
+        await update.message.reply_text(get_random_error("general"))
+
 async def send_image_task(context: CallbackContext, chat_id: int, prompt: str):
     """Generate and send image"""
     try:
@@ -1393,6 +1446,7 @@ def main():
     
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(personality_selection_callback, pattern="^select_personality_"))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     
@@ -1404,6 +1458,7 @@ def main():
     logger.info("✅ Data collection ready (Name, Age, Timezone)")
     logger.info("✅ Time-aware responses enabled")
     logger.info("✅ Dual-brain intelligent routing enabled")
+    logger.info("✅ Image handler ready - Small Brain analyzes images, Big Brain responds with context")
     logger.info("✅ News questions use Sonar Pro (Perplexity) with web search")
     logger.info("✅ RLS enabled (secure)")
     logger.info("💬 BOT IS RUNNING")
