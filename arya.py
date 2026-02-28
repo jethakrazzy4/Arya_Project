@@ -920,22 +920,36 @@ def generate_response(user_id: str, user_message: str, personality: str = 'femal
     MASTER ROUTER - Decides which brain to use
     
     ROUTING LOGIC:
-    1. If image attached → SMALL BRAIN analyzes it → BIG BRAIN replies with image context
+    1. If image was shared → Spinal Cord analysis already in conversation memory
+       Big Brain reads history and replies based on image context
     2. If news/trend/social media keywords detected → SMALL BRAIN (with web search)
     3. Otherwise → BIG BRAIN (personality/roleplay)
+    
+    NOTE: For images, handle_image() now:
+    - Calls Spinal Cord directly to analyze
+    - Saves analysis to conversation memory
+    - Calls generate_response() WITHOUT image_data
+    - Big Brain reads the analysis from conversation history
     
     Args:
         user_id: User ID
         user_message: User's message text
         personality: Selected personality (female/male/non-binary)
-        image_data: Optional image bytes for analysis
+        image_data: Optional image bytes (legacy - now handled in handle_image)
     
     Returns: Final response from appropriate brain
     """
     try:
-        # === IMAGE HANDLING: SPINAL CORD analyzes, then BIG BRAIN replies with context ===
+        # === IMAGE HANDLING (LEGACY - now handled in handle_image) ===
+        # This is kept for backward compatibility in case other code passes image_data
+        # Normally, handle_image() handles the full flow:
+        # 1. Downloads image
+        # 2. Calls Spinal Cord to analyze
+        # 3. Saves analysis to conversation memory
+        # 4. Calls generate_response() WITHOUT image_data
+        # 5. Big Brain reads analysis from conversation history
         if image_data:
-            logger.info("📸 IMAGE DETECTED - Spinal Cord analyzing...")
+            logger.info("📸 IMAGE DATA DETECTED - Spinal Cord analyzing (legacy flow)...")
             image_context = analyze_image_content(image_data, personality)
             
             if image_context:
@@ -1332,7 +1346,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_random_error("voice"))
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle image messages - Small Brain analyzes image, Big Brain responds with context"""
+    """Handle image messages - Spinal Cord analyzes, saves to memory, Big Brain reads history and responds"""
     user_id_telegram = update.effective_user.id
     chat_id = update.effective_chat.id
     
@@ -1354,20 +1368,34 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_file = await context.bot.get_file(photo.file_id)
         photo_bytes = await photo_file.download_as_bytearray()
         
-        # Get caption if user added one
+        # Get caption if user added one, otherwise use default
         user_message = update.message.caption if update.message.caption else "what do you think about this photo?"
         
         logger.info(f"🖼️ IMAGE RECEIVED from {user_id_telegram}: {len(photo_bytes)} bytes")
         
-        # Save the message (with indication it has an image)
+        # STEP 1: Save user's message to memory
         save_to_memory(user_id, "user", f"[shared image] {user_message}")
         update_user_profile(user_id, {"last_message_from_user": datetime.now(timezone.utc).isoformat()})
         
+        # STEP 2: SPINAL CORD analyzes the image directly (not through generate_response)
+        logger.info("🧬 Spinal Cord analyzing image...")
+        image_analysis = await asyncio.to_thread(analyze_image_content, bytes(photo_bytes), profile.get("personality_choice", "female"))
+        
+        if image_analysis:
+            logger.info(f"🧬 Spinal Cord analysis complete: {len(image_analysis)} chars")
+            # STEP 3: Save Spinal Cord's analysis to conversation memory
+            # This way Big Brain can see it in the conversation history
+            save_to_memory(user_id, "system", f"[image_analysis] {image_analysis}")
+            logger.info("💾 Analysis saved to memory for Big Brain to read")
+        else:
+            logger.warning("🧬 Spinal Cord analysis failed")
+        
         personality = profile.get("personality_choice", "female")
         
-        # Pass image_data to generate_response so Small Brain analyzes it
-        # Small Brain will analyze image and give detailed description to Big Brain
-        arya_reply = generate_response(user_id, user_message, personality, image_data=bytes(photo_bytes))
+        # STEP 4: Call generate_response WITHOUT image_data
+        # Big Brain will read the conversation history which now includes the Spinal Cord analysis
+        # This allows Big Brain to respond based on the image content it can see in the history
+        arya_reply = generate_response(user_id, user_message, personality)
         
         if not arya_reply:
             await update.message.reply_text(get_random_error("general"))
