@@ -1385,7 +1385,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"🧬 Spinal Cord analysis complete: {len(image_analysis)} chars")
             # STEP 3: Save Spinal Cord's analysis to conversation memory
             # This way Big Brain can see it in the conversation history
-            save_to_memory(user_id, "system", f"[image_analysis] {image_analysis}")
+            save_to_memory(user_id, "arya", f"[image_analysis] {image_analysis}")
             logger.info("💾 Analysis saved to memory for Big Brain to read")
         else:
             logger.warning("🧬 Spinal Cord analysis failed")
